@@ -8,7 +8,7 @@ Zaawansowane narzędzie webowe do tworzenia, zarządzania i wizualizacji kolejow
 
 ## O Projekcie
 
-Aplikacja ta została stworzona z myślą o miłośnikach kolei i symulatorów, aby umożliwić im proste i szybkie generowanie realistycznych rozkładów jazdy pociągów. Projekt pozwala na pełne zarządzanie danymi wejściowymi – od stacji i łączących je odcinków, po kompletne trasy i ostrzeżenia eksploatacyjne.
+Aplikacja ta została stworzona z myślą o miłośnikach kolei i symulatorów, aby umożliwić im proste i szybkie generowanie realistycznych rozkładów jazdy pociągów. Projekt pozwala na pełne zarządzanie danymi wejściowymi - od stacji i łączących je odcinków, po kompletne trasy i ostrzeżenia eksploatacyjne.
 
 ## Główne Funkcje
 

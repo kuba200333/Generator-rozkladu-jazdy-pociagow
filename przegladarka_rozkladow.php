@@ -184,7 +184,7 @@ function format_days($days_str) {
             font-weight: 700; 
         }
         .col-train .symbols { 
-            font-size: 1.5em; 
+            font-size: 1em; 
             margin-top: 4px; 
             word-spacing: 3px; 
         }
@@ -223,6 +223,49 @@ function format_days($days_str) {
         }
         .train-red td, .train-red td div { 
             color: red !important; 
+        }
+
+        .legend-container {
+            margin-top: 25px;
+            border-top: 3px solid black;
+            padding-top: 10px;
+            display: grid; /* Używamy siatki do stworzenia 3 kolumn */
+            grid-template-columns: repeat(3, 1fr); /* 3 równe kolumny */
+            gap: 0 25px; /* Odstęp tylko między kolumnami */
+            text-align: left;
+        }
+        .legend-column h4 {
+            font-family: 'Arial', sans-serif;
+            text-transform: uppercase;
+            font-size: 1.2em;
+            margin-top: 0;
+            margin-bottom: 15px;
+            border-bottom: 1px solid black;
+            padding-bottom: 5px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: flex-start; /* Lepsze wyrównanie dla długich opisów */
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            line-height: 1.3;
+        }
+        .legend-item .symbol {
+            font-weight: bold;
+            font-family: 'Courier New', Courier, monospace; /* Lepsza czytelność znaków specjalnych */
+            font-size: 1.1em;
+            width: 30px;
+            text-align: center;
+            flex-shrink: 0;
+            margin-right: 10px;
+        }
+        .legend-abbreviation .abbr {
+            font-weight: bold;
+            width: 50px;
+            flex-shrink: 0;
+        }
+        .legend-abbreviation .full-name {
+            padding-left: 8px;
         }
     </style>
 </head>
@@ -273,11 +316,11 @@ function format_days($days_str) {
             <table class="main-table">
                 <thead>
                     <tr>
-                        <th style="text-align:center;">godzina<br>odjazdu</th>
-                        <th style="text-align:center;">peron<br>tor</th>
-                        <th>pociąg</th>
-                        <th>godziny przyjazdów do stacji pośrednich</th>
-                        <th>godzina przyjazdu do<br>stacji docelowej</th>
+                        <th style="text-align:center;">godzina<br>odjazdu<br><small>departure</small></th>
+                        <th style="text-align:center;">peron<br>tor<br><small>platform / track</small></th>
+                        <th>pociąg<br><small>train</small></th>
+                        <th>godziny przyjazdów do stacji pośrednich<br><small>arrivals at intermediate stops</small></th>
+                        <th>godzina przyjazdu do<br>stacji docelowej<br><small>arrival at destination</small></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -307,11 +350,15 @@ function format_days($days_str) {
                             echo "<td class='col-time'>" . date("H:i", strtotime($row['odjazd'])) . "</td>";
                             // MODIFICATION: Show '-' if platform or track is empty
                             echo "<td class='col-platform'>
-                                    <div class='platform-label'></div>
-                                    <div class='platform-num'>" . (!empty($row['peron']) ? htmlspecialchars($row['peron']) : '') . "</div>
-                                    <div class='track-label'></div>
-                                    <div class='track-num'>" . (!empty($row['tor']) ? htmlspecialchars($row['tor']) : '') . "</div>
-                                  </td>";
+                                    <div>
+                                        <span class='platform-label'> </span> 
+                                        <span class='platform-num'>" . (!empty($row['peron']) ? htmlspecialchars($row['peron']) : '') . "</span>
+                                    </div>
+                                    <div>
+                                        <span class='track-label'> </span> 
+                                        <span class='track-num'>" . (!empty($row['tor']) ? htmlspecialchars($row['tor']) : '') . "</span>
+                                    </div>
+                                </td>";
                             echo "<td class='col-train'>
                                     <div class='train-cat-num'>{$row['przewoznik_skrot']}-{$row['typ_skrot']} {$row['numer_pociagu']}</div>
                                     <div class='train-name'>{$row['nazwa_pociagu']}</div>"
@@ -372,6 +419,100 @@ function format_days($days_str) {
                     ?>
                 </tbody>
             </table>
+            <div class="legend-container">
+                <?php
+                // --- Tablice z danymi pozostają bez zmian ---
+                $abbreviations = [
+                    'IC' => '„PKP Intercity” Spółka Akcyjna', 'TLK' => 'Twoje Linie Kolejowe',
+                    'EIC' => 'Express InterCity', 'EIP' => 'Express InterCity Premium', 'EC' => 'EuroCity',
+                    'PR' => 'POLREGIO S.A.', 'R' => 'REGIO', 'RP' => 'przyspieszony pociąg REGIO',
+                    'KW' => 'Koleje Wielkopolskie sp. z o.o.', 'Os' => 'osobowy', 'OsP' => 'osobowy przyspieszony',
+                    'ŁKA' => '„Łódzka Kolej Aglomeracyjna” sp. z o.o.', 'ŁP' => 'ŁKA przyspieszony'
+                ];
+
+                $symbols = [
+                    'g' => 'zastępcza komunikacja autobusowa', 'h' => '1 klasa', 'T' => '2 klasa',
+                    'k' => 'rezerwacja nieobowiązkowa', 'l' => 'rezerwacja obowiązkowa',
+                    'd' => 'wagon z miejscami do leżenia / kuszetka', 'c' => 'wagon sypialny',
+                    'H' => 'wagon z miejscami sypialnymi dla osób na wózkach - z windą/rampą',
+                    'I' => 'sprzedaż napojów i przekąsek z wózka minibar', 'e' => 'wagon gastronomiczny / restauracyjny',
+                    'Z' => 'automat z napojami i przekąskami', 'M' => 'biletomat w pociągu',
+                    'a' => 'wagon z miejscami dla osób na wózkach - z windą/rampą',
+                    't' => 'wagon z miejscami dla osób na wózkach - bez windy/rampy',
+                    ';' => 'możliwość przewozu rowerów w wagonie nieprzystosowanym',
+                    'b' => 'wagon przystosowany do przewozu rowerów', 'p' => 'przewóz przesyłek konduktorskich',
+                    'W' => 'przełączanie wagonów do innego pociągu', '`' => 'wagon z miejscem zabaw dla dzieci',
+                    '@' => 'dostęp do WiFi', 'V' => 'dostępne miejsce do przewijania dziecka', 'y' => 'klimatyzacja',
+                    'w' => 'wagon z miejscem na duży bagaż', '0' => 'zmiana usług na trasie pociągu'
+                ];
+                
+                $operation_days = [
+                    '~' => 'terminy kursowania / days of operation', '/' => 'oprócz / except', '+' => 'oraz / and also',
+                    '1' => 'w poniedziałki / Mondays', '2' => 'we wtorki / Tuesdays', '3' => 'w środy / Wednesdays',
+                    '4' => 'w czwartki / Thursdays', '5' => 'w piątki / Fridays', '6' => 'w soboty / Saturdays', '7' => 'w niedziele / Sundays'
+                ];
+
+                // ✅ NOWA MAPA ZASTĘPUJĄCA SYMBOLE NA EMOJI
+                $symbol_display_map = [
+                    'g' => '🚌', 'h' => '1️⃣', 'T' => '2️⃣', 'k' => 'R', 'l' => '®',
+                    'd' => '⌶', 'c' => '🛏️', 'H' => '🛏️♿', 'I' => '🛒', 'e' => '🍴',
+                    'Z' => '🥫', 'M' => '🎟️', 'a' => '♿', 't' => '♿', ';' => '🚲',
+                    'b' => '🚲', 'p' => '📦', 'W' => '🔄', '`' => '🧸', '@' => '📶',
+                    'V' => '🚼', 'y' => '❄️', 'w' => '🧳', '0' => 'ℹ️'
+                ];
+                ?>
+
+                <div class="legend-column">
+                    <h4>Objaśnienia skrótów / abbreviations</h4>
+                    <?php foreach ($abbreviations as $abbr => $full_name): ?>
+                        <div class="legend-item legend-abbreviation">
+                            <span class="abbr"><?= htmlspecialchars($abbr) ?></span>
+                            <span class="full-name"><?= htmlspecialchars($full_name) ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <div class="legend-column">
+                    <h4>Objaśnienia znaków / symbols</h4>
+                    <?php
+                        $symbol_keys = array_keys($symbols);
+                        $half = ceil(count($symbol_keys) / 2);
+                        for ($i = 0; $i < $half; $i++) {
+                            $key = $symbol_keys[$i];
+                            // ✅ ZMIANA: Wyświetlamy emoji z mapy, a jeśli nie ma, to oryginalny klucz
+                            $display_symbol = $symbol_display_map[$key] ?? htmlspecialchars($key);
+                            echo "<div class='legend-item'>
+                                    <span class='symbol'>" . $display_symbol . "</span>
+                                    <span>" . htmlspecialchars($symbols[$key]) . "</span>
+                                  </div>";
+                        }
+                    ?>
+                </div>
+
+                <div class="legend-column">
+                    <h4 style="visibility: hidden;">Objaśnienia znaków / symbols</h4>
+                     <?php
+                        for ($i = $half; $i < count($symbol_keys); $i++) {
+                            $key = $symbol_keys[$i];
+                            // ✅ ZMIANA: Wyświetlamy emoji z mapy, a jeśli nie ma, to oryginalny klucz
+                            $display_symbol = $symbol_display_map[$key] ?? htmlspecialchars($key);
+                            echo "<div class='legend-item'>
+                                    <span class='symbol'>" . $display_symbol . "</span>
+                                    <span>" . htmlspecialchars($symbols[$key]) . "</span>
+                                  </div>";
+                        }
+                    ?>
+                    
+                    <div style="margin-top: 15px; border-top: 1px solid #A0A0A0; padding-top: 15px;">
+                        <?php foreach ($operation_days as $symbol => $description): ?>
+                            <div class="legend-item">
+                                <span class="symbol"><?= $symbol_display_map[$symbol] ?? htmlspecialchars($symbol) ?></span>
+                                <span><?= htmlspecialchars($description) ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
         </div>
     <?php endif; ?>
 </div>

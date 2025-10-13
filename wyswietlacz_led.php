@@ -176,28 +176,219 @@ if ($id_przejazdu_wybranego) {
             </div>
             <button class="nav-button" onclick="navigate('next')">▶</button>
         </div>
+        <audio id="announcement-audio" preload="auto"></audio>
     <?php endif; ?>
 
     <script>
-      // Cały kod JavaScript pozostaje bez zmian
       const schedule = <?php echo json_encode($stacje_list); ?>;
       const trainInfo = "<?php echo $info_pociagu; ?>";
       const trainName = "<?php echo $nazwa_pociagu; ?>";
       const destination = "<?php echo $kierunek; ?>";
       const line1 = document.getElementById('line1');
       const line2 = document.getElementById('line2');
+      // Dodany element audio
+      const audioPlayer = document.getElementById('announcement-audio');
+      
       let currentIndex = 0;
-      let displayMode = 0;
+      let displayMode = 0; // 0: Następna stacja (n_), 1: Bieżąca stacja (s_)
       let autoTickerTimeout = null;
       let textDisplayInterval = null;
       let infoLoopTimeout = null;
-      function getStationTimes(station) { if (station.przyjazd && station.odjazd && station.przyjazd.substring(0, 5) === station.odjazd.substring(0, 5)) { return 'p.' + station.przyjazd.substring(0, 5); } let times = ''; if (station.przyjazd) times += 'p.' + station.przyjazd.substring(0, 5) + ' '; if (station.odjazd) times += 'o.' + station.odjazd.substring(0, 5); return times.trim(); }
-      function displayText(element, text, maxChars = 25) { clearInterval(textDisplayInterval); element.innerHTML = ''; if (text.length <= maxChars) { element.textContent = text; return; } const words = text.split(' '); let pages = []; let currentPage = ''; for (const word of words) { if ((currentPage + word).length > maxChars) { pages.push(currentPage.trim()); currentPage = word + ' '; } else { currentPage += word + ' '; } } pages.push(currentPage.trim()); let pageIndex = 0; element.textContent = pages[pageIndex]; if (pages.length > 1) { textDisplayInterval = setInterval(() => { pageIndex = (pageIndex + 1) % pages.length; element.textContent = pages[pageIndex]; }, 2000); } }
-      function clearAllTimers() { clearTimeout(autoTickerTimeout); clearInterval(textDisplayInterval); clearTimeout(infoLoopTimeout); }
-      function updateDisplay() { if (!schedule || schedule.length === 0) return; clearAllTimers(); line1.innerHTML = ''; line2.innerHTML = ''; const station = schedule[currentIndex]; const stationName = station.nazwa_stacji.toUpperCase(); const stationTimes = getStationTimes(station); if (displayMode === 0) { displayText(line1, 'NASTĘPNA STACJA:'); displayText(line2, stationName + ' ' + stationTimes); autoTickerTimeout = setTimeout(startInfoTicker, 4000); } else { displayText(line1, 'STACJA:'); displayText(line2, stationName + ' ' + stationTimes); } }
-      function startInfoTicker() { let loopState = 0; const weekDays = ['NIEDZIELA', 'PONIEDZIAŁEK', 'WTOREK', 'ŚRODA', 'CZWARTEK', 'PIĄTEK', 'SOBOTA']; const months = ['STYCZNIA', 'LUTEGO', 'MARCA', 'KWIETNIA', 'MAJA', 'CZERWCA', 'LIPCA', 'SIERPNIA', 'WRZEŚNIA', 'PAŹDZIERNIKA', 'LISTOPADA', 'GRUDNIA']; function loopStep() { clearAllTimers(); line1.innerHTML = ''; line2.innerHTML = ''; let nextStepDelay = 7500; switch(loopState) { case 0: const remainingStations = schedule.slice(currentIndex); if (remainingStations.length <= 1) { displayText(line1, 'STACJA DOCELOWA: '); displayText(line2, remainingStations[0].nazwa_stacji.toUpperCase() + ' ' + getStationTimes(remainingStations[0])); loopState = 1; nextStepDelay = 7500; } else { displayText(line1, 'TRASA:'); const routeString = remainingStations.map(s => `${s.nazwa_stacji.toUpperCase()} ${getStationTimes(s)}`).join('  -  '); const wrapper = document.createElement('div'); wrapper.className = 'ticker-wrapper'; const scrollingSpan = document.createElement('span'); scrollingSpan.className = 'scrolling-text'; scrollingSpan.textContent = routeString; const duration = routeString.length * 0.25; scrollingSpan.style.animation = `marquee ${duration}s linear`; wrapper.appendChild(scrollingSpan); line2.appendChild(wrapper); nextStepDelay = (duration * 1000) + 2000; loopState = 1; } break; case 1: displayText(line1, 'POCIĄG ' + trainInfo + ' ' + trainName.toUpperCase()); displayText(line2, 'STACJA DOCELOWA: ' + destination.toUpperCase()); loopState = 2; break; case 2: const now = new Date(); const dateStr = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`; const timeStr = now.toTimeString().split(' ')[0]; displayText(line1, dateStr); displayText(line2, `${weekDays[now.getDay()]} ${timeStr}`); loopState = 0; break; } infoLoopTimeout = setTimeout(loopStep, nextStepDelay); } loopStep(); }
-      function navigate(direction) { clearAllTimers(); if (direction === 'next') { if (displayMode === 1) { if (currentIndex < schedule.length - 1) { currentIndex++; displayMode = 0; updateDisplay(); } } else { displayMode = 1; updateDisplay(); } } else if (direction === 'prev') { if (displayMode === 0) { if (currentIndex > 0) { currentIndex--; displayMode = 1; } } else { displayMode = 0; } updateDisplay(); } }
-      if (schedule.length > 0) { updateDisplay(); }
+      
+      // Funkcja zamieniająca nazwę stacji na bezpieczną nazwę pliku
+      function getFileName(stationName) {
+        // Usuwa polskie znaki diakrytyczne i zamienia spacje na podkreślenia,
+        // oraz usuwa kropki, aby pasowało do formatu plików np. "Stary Kłukom" -> "Stary_Klukom"
+        let name = stationName.replace(/ł/g, 'l').replace(/Ł/g, 'L')
+                                .replace(/[ąćęłńóśźż]/g, c => ({'ą':'a','ć':'c','ę':'e','ł':'l','ń':'n','ó':'o','ś':'s','ź':'z','ż':'z'}[c]))
+                                .replace(/[\. ]/g, '_');
+        return name;
+      }
+      
+      // NOWA FUNKCJA: Odtwarza komunikat głosowy
+      function playAnnouncement(stationName, mode) {
+          // Zatrzymujemy bieżące odtwarzanie, jeśli jest
+          audioPlayer.pause();
+          audioPlayer.currentTime = 0;
+
+          // 'n_' dla Next (Następna Stacja) lub 's_' dla Station (Stacja)
+          const prefix = mode === 0 ? 'n_' : 's_';
+          const fileName = getFileName(stationName);
+          const fullPath = `dzwiek/${prefix}${fileName}.mp3`; // Zakładamy, że pliki są w folderze "dzwiek"
+
+          // Ustawiamy źródło i uruchamiamy
+          audioPlayer.src = fullPath;
+          audioPlayer.play().catch(e => console.log("Błąd odtwarzania audio:", e));
+      }
+      
+      function getStationTimes(station) { 
+        if (station.przyjazd && station.odjazd && station.przyjazd.substring(0, 5) === station.odjazd.substring(0, 5)) { 
+          return 'p.' + station.przyjazd.substring(0, 5); 
+        } 
+        let times = ''; 
+        if (station.przyjazd) times += 'p.' + station.przyjazd.substring(0, 5) + ' '; 
+        if (station.odjazd) times += 'o.' + station.odjazd.substring(0, 5); 
+        return times.trim(); 
+      }
+      
+      function displayText(element, text, maxChars = 25) { 
+        clearInterval(textDisplayInterval); 
+        element.innerHTML = ''; 
+        if (text.length <= maxChars) { 
+          element.textContent = text; 
+          return; 
+        } 
+        const words = text.split(' '); 
+        let pages = []; 
+        let currentPage = ''; 
+        for (const word of words) { 
+          // Logika do sprawdzania, czy kolejny wyraz nie przekracza limitu
+          // Poprawiono, aby poprawnie liczyć spacje po dodaniu słowa
+          if ((currentPage.length + word.length + (currentPage.length > 0 ? 1 : 0)) > maxChars) { 
+            pages.push(currentPage.trim()); 
+            currentPage = word + ' '; 
+          } else { 
+            currentPage += word + ' '; 
+          } 
+        } 
+        pages.push(currentPage.trim()); 
+        
+        let pageIndex = 0; 
+        element.textContent = pages[pageIndex]; 
+        
+        // Zmniejszamy interwał, aby przewijanie było szybsze
+        if (pages.length > 1) { 
+          textDisplayInterval = setInterval(() => { 
+            pageIndex = (pageIndex + 1) % pages.length; 
+            element.textContent = pages[pageIndex]; 
+          }, 1500); // Zmieniono z 2000 na 1500ms
+        } 
+      }
+      
+      function clearAllTimers() { 
+        clearTimeout(autoTickerTimeout); 
+        clearInterval(textDisplayInterval); 
+        clearTimeout(infoLoopTimeout); 
+      }
+      
+      // ZMODYFIKOWANA FUNKCJA: dodano wywołanie playAnnouncement
+      function updateDisplay(playAudio = true) { 
+        if (!schedule || schedule.length === 0) return; 
+        clearAllTimers(); 
+        line1.innerHTML = ''; 
+        line2.innerHTML = ''; 
+        
+        const station = schedule[currentIndex]; 
+        const stationName = station.nazwa_stacji.toUpperCase(); 
+        const stationTimes = getStationTimes(station); 
+        
+        if (displayMode === 0) { 
+          displayText(line1, 'NASTĘPNA STACJA:'); 
+          displayText(line2, stationName + ' ' + stationTimes); 
+          autoTickerTimeout = setTimeout(startInfoTicker, 4000); 
+          if (playAudio) playAnnouncement(station.nazwa_stacji, 0); // Tryb 0: Następna Stacja (n_)
+        } else { 
+          displayText(line1, 'STACJA:'); 
+          displayText(line2, stationName + ' ' + stationTimes); 
+          if (playAudio) playAnnouncement(station.nazwa_stacji, 1); // Tryb 1: Bieżąca Stacja (s_)
+        } 
+      }
+      
+      function startInfoTicker() { 
+        let loopState = 0; 
+        const weekDays = ['NIEDZIELA', 'PONIEDZIAŁEK', 'WTOREK', 'ŚRODA', 'CZWARTEK', 'PIĄTEK', 'SOBOTA']; 
+        const months = ['STYCZNIA', 'LUTEGO', 'MARCA', 'KWIETNIA', 'MAJA', 'CZERWCA', 'LIPCA', 'SIERPNIA', 'WRZEŚNIA', 'PAŹDZIERNIKA', 'LISTOPADA', 'GRUDNIA']; 
+        
+        function loopStep() { 
+          clearAllTimers(); 
+          line1.innerHTML = ''; 
+          line2.innerHTML = ''; 
+          
+          let nextStepDelay = 7500; 
+          
+          switch(loopState) { 
+            case 0: 
+              const remainingStations = schedule.slice(currentIndex); 
+              if (remainingStations.length <= 1) { 
+                // Jeśli ostatnia stacja lub tylko jedna stacja na trasie
+                displayText(line1, 'STACJA DOCELOWA: '); 
+                displayText(line2, remainingStations[0].nazwa_stacji.toUpperCase() + ' ' + getStationTimes(remainingStations[0])); 
+                loopState = 1; 
+                nextStepDelay = 7500; 
+              } else { 
+                // Przewijanie trasy
+                displayText(line1, 'TRASA:'); 
+                // Użycie tylko nazwy stacji dla paska, aby był czytelniejszy
+                const routeString = remainingStations.map(s => `${s.nazwa_stacji.toUpperCase()} ${getStationTimes(s)}`).join('  -  '); 
+                const wrapper = document.createElement('div'); 
+                wrapper.className = 'ticker-wrapper'; 
+                const scrollingSpan = document.createElement('span'); 
+                scrollingSpan.className = 'scrolling-text'; 
+                scrollingSpan.textContent = routeString; 
+                const duration = Math.max(15, routeString.length * 0.25); // Minimalna długość animacji 15s
+                scrollingSpan.style.animation = `marquee ${duration}s linear`; 
+                wrapper.appendChild(scrollingSpan); 
+                line2.appendChild(wrapper); 
+                nextStepDelay = (duration * 1000) + 2000; 
+                loopState = 1; 
+              } 
+              break; 
+            case 1: 
+              displayText(line1, 'POCIĄG ' + trainInfo + ' ' + trainName.toUpperCase()); 
+              displayText(line2, 'STACJA DOCELOWA: ' + destination.toUpperCase()); 
+              loopState = 2; 
+              break; 
+            case 2: 
+              const now = new Date(); 
+              const dateStr = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`; 
+              const timeStr = now.toTimeString().split(' ')[0].substring(0, 8); // Dodano sekundy
+              displayText(line1, dateStr); 
+              displayText(line2, `${weekDays[now.getDay()]} ${timeStr}`); 
+              loopState = 0; 
+              break; 
+          } 
+          infoLoopTimeout = setTimeout(loopStep, nextStepDelay); 
+        } 
+        loopStep(); 
+      }
+      
+      // ZMODYFIKOWANA FUNKCJA: Używamy teraz updateDisplay(true) do odtwarzania dźwięku przy nawigacji
+      function navigate(direction) { 
+        clearAllTimers(); 
+        
+        // Zapisujemy poprzednie wartości, by sprawdzić, czy nastąpiła faktyczna zmiana stacji
+        const prevIndex = currentIndex;
+        const prevMode = displayMode;
+        
+        if (direction === 'next') { 
+          if (displayMode === 1) { 
+            if (currentIndex < schedule.length - 1) { 
+              currentIndex++; 
+              displayMode = 0; // Następna stacja
+            }
+          } else { 
+            displayMode = 1; // Aktualna stacja
+          } 
+        } else if (direction === 'prev') { 
+          if (displayMode === 0) { 
+            if (currentIndex > 0) { 
+              currentIndex--; 
+              displayMode = 1; // Aktualna stacja
+            }
+          } else { 
+            displayMode = 0; // Następna stacja
+          } 
+        }
+        
+        // Odtwarzamy dźwięk tylko, jeśli zmienił się tryb lub stacja (lub jest to włączenie pierwszej stacji)
+        const playAudio = (prevIndex !== currentIndex) || (prevMode !== displayMode);
+
+        updateDisplay(playAudio);
+      }
+      
+      if (schedule.length > 0) { 
+        updateDisplay(); // Odtworzy dźwięk przy pierwszym załadowaniu
+      }
     </script>
 </body>
 </html>

@@ -1,16 +1,18 @@
 <?php
 require 'db_config.php';
 $id_przejazdu_wybranego = isset($_GET['id_przejazdu']) ? (int)$_GET['id_przejazdu'] : null;
+// Pobieramy start_index, jeśli został wysłany
+$start_index = isset($_GET['start_index']) ? (int)$_GET['start_index'] : null;
 
 $stacje_list = [];
 $info_pociagu = '';
 $nazwa_pociagu = '';
 $kierunek = '';
-$formularz_ukryty = false;
+
+// Formularz ukrywamy TYLKO wtedy, gdy wybrano pociąg ORAZ wybrano stację startową
+$formularz_ukryty = ($id_przejazdu_wybranego && $start_index !== null);
 
 if ($id_przejazdu_wybranego) {
-    $formularz_ukryty = true;
-    // Pobierz dane o przejeździe
     $sql_info = "SELECT p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy, tp.skrot as typ_skrot 
                  FROM przejazdy p
                  JOIN trasy t ON p.id_trasy = t.id_trasy
@@ -23,7 +25,6 @@ if ($id_przejazdu_wybranego) {
     $info_pociagu = $przejazd_info['typ_skrot'] . ' ' . $przejazd_info['numer_pociagu'];
     $nazwa_pociagu = $przejazd_info['nazwa_pociagu'];
     
-    // Używamy bezpośrednio pobranej nazwy stacji końcowej
     $sql_koncowa = "SELECT s.nazwa_stacji FROM trasy t JOIN stacje s ON t.id_stacji_koncowej = s.id_stacji WHERE t.id_trasy = (SELECT id_trasy FROM przejazdy WHERE id_przejazdu = ?)";
     $stmt_koncowa = mysqli_prepare($conn, $sql_koncowa);
     mysqli_stmt_bind_param($stmt_koncowa, "i", $id_przejazdu_wybranego);
@@ -31,8 +32,7 @@ if ($id_przejazdu_wybranego) {
     $koncowa_info = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt_koncowa));
     $kierunek = $koncowa_info['nazwa_stacji'];
 
-    // Pobieramy tylko stację początkową (przyjazd IS NULL), końcową (odjazd IS NULL) i te z postojem 'ph'
-    $sql_szczegoly = "SELECT s.nazwa_stacji, sr.przyjazd, sr.odjazd, sr.uwagi_postoju 
+    $sql_szczegoly = "SELECT sr.id_szczegolu, s.nazwa_stacji, sr.przyjazd, sr.odjazd, sr.uwagi_postoju 
                       FROM szczegoly_rozkladu sr 
                       JOIN stacje s ON sr.id_stacji = s.id_stacji 
                       WHERE sr.id_przejazdu = ? AND (sr.uwagi_postoju = 'ph' OR sr.przyjazd IS NULL OR sr.odjazd IS NULL)
@@ -44,6 +44,7 @@ if ($id_przejazdu_wybranego) {
     $stacje_list = mysqli_fetch_all($result_szczegoly, MYSQLI_ASSOC);
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -52,108 +53,30 @@ if ($id_przejazdu_wybranego) {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
-    <link rel="manifest" href="manifest.json">
     <style>
-        /* === ZMIENIONE STYLE DLA MINIMALIZACJI APLIKACJI === */
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-        }
-
-        body { 
-            background-color: #333; 
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-        }
-        /* Klasa .container została usunięta z kodu HTML, więc jej definicja nie jest już potrzebna */
-
-        .form-container { 
-            background-color: #d4edda; 
-            padding: 25px; /* Zwiększony padding dla lepszego wyglądu */
-            border-radius: 8px; 
-            margin-bottom: 20px;
-            width: 600px; /* Stała szerokość dla estetyki */
-            box-sizing: border-box; /* Zapobiega problemom z paddingiem */
-            text-align: center;
-        }
-        
-        a { 
-            color: #fff; 
-            margin-bottom: 20px; 
-            font-size: 1.2em;
-            text-decoration: none; /* Lepszy wygląd linku */
-        }
-        a:hover {
-            text-decoration: underline;
-        }
-        
-        .ukryty {
-            display: none;
-        }
-        
-        .display-wrapper {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 15px;
-            padding: 20px; /* Daje minimalny margines od krawędzi okna */
-        }
-
-        .nav-button {
-            background: transparent;
-            border: none;
-            color: #D4452D;
-            font-size: 2.5em;
-            cursor: pointer;
-            padding: 10px;
-            opacity: 0.2;
-            transition: opacity 0.3s ease, transform 0.2s ease;
-        }
-
-        .display-wrapper:hover .nav-button {
-            opacity: 1;
-        }
-
-        .nav-button:hover {
-            transform: scale(1.1);
-        }
-
-        .led-display { 
-            background-color: #2a1a00; 
-            border: 5px solid #4a3a20; 
-            border-radius: 10px; 
-            padding: 20px; 
-            font-family: 'DotGothic16', sans-serif; 
-            color: #D4452D;
-            text-shadow: 0 0 5px rgba(212, 69, 45, 0.7), 0 0 8px rgba(212, 69, 45, 0.5);
-            font-size: 28px; 
-            line-height: 1.5; 
-            text-transform: uppercase;
-            flex-shrink: 0; /* Zapobiega kurczeniu się */
-            width: 450px; /* Ustawia stałą szerokość wyświetlacza */
-        }
-        
+        html, body { height: 100%; margin: 0; padding: 0; }
+        body { background-color: #333; overflow: hidden; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .form-container { background-color: #d4edda; padding: 25px; border-radius: 8px; margin-bottom: 20px; width: 600px; box-sizing: border-box; text-align: center; }
+        .ukryty { display: none; }
+        .display-wrapper { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 20px; }
+        .nav-button { background: transparent; border: none; color: #D4452D; font-size: 2.5em; cursor: pointer; padding: 10px; opacity: 0.2; transition: opacity 0.3s ease, transform 0.2s ease; }
+        .display-wrapper:hover .nav-button { opacity: 1; }
+        .nav-button:hover { transform: scale(1.1); }
+        .led-display { background-color: #2a1a00; border: 5px solid #4a3a20; border-radius: 10px; padding: 20px; font-family: 'DotGothic16', sans-serif; color: #D4452D; text-shadow: 0 0 5px rgba(212, 69, 45, 0.7), 0 0 8px rgba(212, 69, 45, 0.5); font-size: 28px; line-height: 1.5; text-transform: uppercase; flex-shrink: 0; width: 450px; }
+        .led-line-green { color: #fae92eff !important; text-shadow: 0 0 5px rgba(253, 175, 116, 0.8), 0 0 10px rgba(253, 175, 116, 0.6); }
         .led-line { min-height: 42px; overflow: hidden; white-space: nowrap; display: flex; align-items: center; justify-content: flex-start; }
         .ticker-wrapper { flex-grow: 1; overflow: hidden; min-width: 0; }
-        .scrolling-text { display: inline-block; padding-left: 100%; animation: marquee 15s linear; }
+        .scrolling-text { display: inline-block; padding-left: 100%; animation: marquee 15s linear infinite; } 
         @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
     </style>
 </head>
 <body>
     
-    <?php if (!$formularz_ukryty): ?>
-        <a href="index.php">Powrót do menu</a>
-    <?php endif; ?>
-
     <div class="form-container <?php if ($formularz_ukryty) echo 'ukryty'; ?>">
         <form method="GET" action="">
-            <label for="id_przejazdu"><strong>Wybierz zapisany rozkład:</strong></label>
-            <select name="id_przejazdu" id="id_przejazdu" onchange="this.form.submit()" style="width: 90%; padding: 5px; margin-top: 5px;">
-                <option value="">-- Wybierz pociąg --</option>
+            <label for="id_przejazdu"><strong>1. Wybierz pociąg:</strong></label>
+            <select name="id_przejazdu" id="id_przejazdu" onchange="this.form.submit()">
+                <option value="">-- Wybierz z listy --</option>
                 <?php
                 $sql_przejazdy = "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy, tp.skrot as typ_skrot FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu ORDER BY p.data_utworzenia DESC";
                 $res = mysqli_query($conn, $sql_przejazdy);
@@ -165,6 +88,20 @@ if ($id_przejazdu_wybranego) {
                 ?>
             </select>
         </form>
+
+        <?php if ($id_przejazdu_wybranego && !empty($stacje_list)): ?>
+        <form method="GET" action="" style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 15px;">
+            <input type="hidden" name="id_przejazdu" value="<?= $id_przejazdu_wybranego ?>">
+            <label for="start_index"><strong>2. Rozpocznij od stacji:</strong></label><br>
+            <select name="start_index" id="start_index">
+                <?php foreach ($stacje_list as $index => $stacja): ?>
+                    <option value="<?= $index ?>"><?= ($index + 1) . ". " . $stacja['nazwa_stacji'] ?></option>
+                <?php endforeach; ?>
+            </select>
+            <br>
+            <button type="submit" class="start-btn">URUCHOM WYŚWIETLACZ</button>
+        </form>
+        <?php endif; ?>
     </div>
 
     <?php if ($id_przejazdu_wybranego): ?>
@@ -172,53 +109,127 @@ if ($id_przejazdu_wybranego) {
             <button class="nav-button" onclick="navigate('prev')">◀</button>
             <div class="led-display">
                 <div id="line1" class="led-line"></div>
-                <div id="line2" class="led-line"></div>
+                <div id="line2" class="led-line led-line-green"></div>
             </div>
             <button class="nav-button" onclick="navigate('next')">▶</button>
         </div>
         <audio id="announcement-audio" preload="auto"></audio>
     <?php endif; ?>
 
-    <script>
+<script>
+      function saveAutoTime(id, type) {
+          const formData = new FormData();
+          formData.append('id_szczegolu', id);
+          formData.append('typ', type);
+          fetch('zapisz_czas_auto.php', { method: 'POST', body: formData });
+      }
       const schedule = <?php echo json_encode($stacje_list); ?>;
       const trainInfo = "<?php echo $info_pociagu; ?>";
       const trainName = "<?php echo $nazwa_pociagu; ?>";
       const destination = "<?php echo $kierunek; ?>";
       const line1 = document.getElementById('line1');
       const line2 = document.getElementById('line2');
-      // Dodany element audio
       const audioPlayer = document.getElementById('announcement-audio');
       
-      let currentIndex = 0;
-      let displayMode = 0; // 0: Następna stacja (n_), 1: Bieżąca stacja (s_)
-      let autoTickerTimeout = null;
-      let textDisplayInterval = null;
+      let currentIndex = <?php echo $start_index !== null ? $start_index : 0; ?>;
+      let displayMode = 0;
       let infoLoopTimeout = null;
-      
-      // Funkcja zamieniająca nazwę stacji na bezpieczną nazwę pliku
+      let textDisplayInterval = null;
+      let audioPlaylist = [];
+      let currentAudioIndex = 0;
+      let playDestinationInLoop = false; 
+      let calculatedDelayMinutes = 0; 
+      let playDelayAnnouncement = false; 
+      let lastDepartureTime = null; 
+      let isMaster = false; // Czy ta karta steruje?
+
+      // === SYNCHRONIZACJA ===
+      const syncChannel = new BroadcastChannel('train_display_sync');
+
+      syncChannel.onmessage = (event) => {
+        const data = event.data;
+        if (data.type === 'update_state') {
+            // Jesteśmy Slave
+            isMaster = false;
+            currentIndex = data.index;
+            displayMode = data.mode;
+            lastDepartureTime = data.lastDepartureTime;
+
+            playDelayAnnouncement = false; 
+            playDestinationInLoop = false; 
+            
+            updateDisplay(); // Odśwież, ale czekaj na trigger
+        }
+        else if (data.type === 'trigger_loop') {
+            startInfoTicker();
+        }
+      };
+
+      function sendSyncUpdate() {
+        syncChannel.postMessage({
+            type: 'update_state',
+            index: currentIndex,
+            mode: displayMode,
+            lastDepartureTime: lastDepartureTime
+        });
+      }
+
       function getFileName(stationName) {
-        // Usuwa polskie znaki diakrytyczne i zamienia spacje na podkreślenia,
-        // oraz usuwa kropki, aby pasowało do formatu plików np. "Stary Kłukom" -> "Stary_Klukom"
         let name = stationName.replace(/ł/g, 'l').replace(/Ł/g, 'L')
                                 .replace(/[ąćęłńóśźż]/g, c => ({'ą':'a','ć':'c','ę':'e','ł':'l','ń':'n','ó':'o','ś':'s','ź':'z','ż':'z'}[c]))
                                 .replace(/[\. ]/g, '_');
         return name;
       }
       
-      // NOWA FUNKCJA: Odtwarza komunikat głosowy
-      function playAnnouncement(stationName, mode) {
-          // Zatrzymujemy bieżące odtwarzanie, jeśli jest
+      function playSequential(files, onFinishedCallback = null) {
           audioPlayer.pause();
           audioPlayer.currentTime = 0;
+          audioPlayer.onended = null;
+          audioPlayer.muted = false;
+          audioPlaylist = files;
+          currentAudioIndex = 0;
 
-          // 'n_' dla Next (Następna Stacja) lub 's_' dla Station (Stacja)
+          if (audioPlaylist.length === 0) {
+              if (onFinishedCallback) onFinishedCallback();
+              return;
+          }
+
+          const normalOnEnd = () => {
+              currentAudioIndex++;
+              if (currentAudioIndex < audioPlaylist.length) {
+                  audioPlayer.src = audioPlaylist[currentAudioIndex];
+                  audioPlayer.play().catch(e => console.log("Błąd odtwarzania:", e));
+              } else {
+                  audioPlayer.onended = null;
+                  audioPlaylist = [];
+                  if (onFinishedCallback) onFinishedCallback();
+              }
+          };
+
+          const firstFile = audioPlaylist[currentAudioIndex];
+          audioPlayer.src = firstFile;
+          audioPlayer.muted = false;
+          audioPlayer.onended = normalOnEnd;
+          audioPlayer.play().catch(e => console.log("Play error:", e));
+      }
+      
+      function playAnnouncement(stationName, mode) {
           const prefix = mode === 0 ? 'n_' : 's_';
           const fileName = getFileName(stationName);
-          const fullPath = `dzwiek/${prefix}${fileName}.mp3`; // Zakładamy, że pliki są w folderze "dzwiek"
-
-          // Ustawiamy źródło i uruchamiamy
-          audioPlayer.src = fullPath;
-          audioPlayer.play().catch(e => console.log("Błąd odtwarzania audio:", e));
+          const fullPath = `dzwiek/${prefix}${fileName}.mp3`;
+          
+          const callback = (mode === 0) ? () => {
+              startInfoTicker();
+              syncChannel.postMessage({ type: 'trigger_loop' });
+          } : null;
+          
+          playSequential([fullPath], callback);
+      }
+      
+      function playDestinationAnnouncement() {
+          const destinationFileName = getFileName(destination);
+          const filesToPlay = ['dzwiek/stacja_koncowa1.mp3', `dzwiek/s_${destinationFileName}.mp3`];
+          playSequential(filesToPlay);
       }
       
       function getStationTimes(station) { 
@@ -238,43 +249,30 @@ if ($id_przejazdu_wybranego) {
           element.textContent = text; 
           return; 
         } 
-        const words = text.split(' '); 
-        let pages = []; 
-        let currentPage = ''; 
-        for (const word of words) { 
-          // Logika do sprawdzania, czy kolejny wyraz nie przekracza limitu
-          // Poprawiono, aby poprawnie liczyć spacje po dodaniu słowa
-          if ((currentPage.length + word.length + (currentPage.length > 0 ? 1 : 0)) > maxChars) { 
-            pages.push(currentPage.trim()); 
-            currentPage = word + ' '; 
-          } else { 
-            currentPage += word + ' '; 
-          } 
-        } 
-        pages.push(currentPage.trim()); 
-        
-        let pageIndex = 0; 
-        element.textContent = pages[pageIndex]; 
-        
-        // Zmniejszamy interwał, aby przewijanie było szybsze
-        if (pages.length > 1) { 
-          textDisplayInterval = setInterval(() => { 
-            pageIndex = (pageIndex + 1) % pages.length; 
-            element.textContent = pages[pageIndex]; 
-          }, 1500); // Zmieniono z 2000 na 1500ms
-        } 
+        const wrapper = document.createElement('div'); wrapper.className = 'ticker-wrapper'; 
+        const scrollingSpan = document.createElement('span'); scrollingSpan.className = 'scrolling-text';
+        scrollingSpan.textContent = text; 
+        const duration = Math.max(8, text.length * 0.2); 
+        scrollingSpan.style.animation = `marquee ${duration}s linear infinite`; 
+        wrapper.appendChild(scrollingSpan); element.appendChild(wrapper);
       }
       
-      function clearAllTimers() { 
-        clearTimeout(autoTickerTimeout); 
-        clearInterval(textDisplayInterval); 
-        clearTimeout(infoLoopTimeout); 
+      function calculateDelay() {
+          if (!lastDepartureTime) return 0;
+          const now = new Date();
+          const [hours, minutes] = lastDepartureTime.substring(0, 5).split(':').map(Number);
+          let scheduledDeparture = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+          const differenceMs = now.getTime() - scheduledDeparture.getTime();
+          const delayMinutes = Math.floor(differenceMs / (1000 * 60));
+          return Math.max(0, delayMinutes); 
       }
       
-      // ZMODYFIKOWANA FUNKCJA: dodano wywołanie playAnnouncement
-      function updateDisplay(playAudio = true) { 
+      function updateDisplay() { 
         if (!schedule || schedule.length === 0) return; 
-        clearAllTimers(); 
+        
+        clearTimeout(infoLoopTimeout);
+        clearInterval(textDisplayInterval);
+        
         line1.innerHTML = ''; 
         line2.innerHTML = ''; 
         
@@ -283,111 +281,136 @@ if ($id_przejazdu_wybranego) {
         const stationTimes = getStationTimes(station); 
         
         if (displayMode === 0) { 
+          calculatedDelayMinutes = calculateDelay();
           displayText(line1, 'NASTĘPNA STACJA:'); 
           displayText(line2, stationName + ' ' + stationTimes); 
-          autoTickerTimeout = setTimeout(startInfoTicker, 4000); 
-          if (playAudio) playAnnouncement(station.nazwa_stacji, 0); // Tryb 0: Następna Stacja (n_)
+          
+          if (isMaster) {
+             playAnnouncement(station.nazwa_stacji, 0);
+             // Trigger wyśle playAnnouncement po zakończeniu
+          } else {
+             // Slave: czeka na trigger
+          }
+
         } else { 
+          calculatedDelayMinutes = 0;
           displayText(line1, 'STACJA:'); 
           displayText(line2, stationName + ' ' + stationTimes); 
-          if (playAudio) playAnnouncement(station.nazwa_stacji, 1); // Tryb 1: Bieżąca Stacja (s_)
+          
+          if (isMaster) playAnnouncement(station.nazwa_stacji, 1);
+          clearTimeout(infoLoopTimeout); 
+          audioPlayer.onended = null;
         } 
       }
       
       function startInfoTicker() { 
+        audioPlayer.pause(); audioPlayer.currentTime = 0; audioPlayer.onended = null;
+        clearTimeout(infoLoopTimeout); clearInterval(textDisplayInterval); 
+        
         let loopState = 0; 
         const weekDays = ['NIEDZIELA', 'PONIEDZIAŁEK', 'WTOREK', 'ŚRODA', 'CZWARTEK', 'PIĄTEK', 'SOBOTA']; 
         const months = ['STYCZNIA', 'LUTEGO', 'MARCA', 'KWIETNIA', 'MAJA', 'CZERWCA', 'LIPCA', 'SIERPNIA', 'WRZEŚNIA', 'PAŹDZIERNIKA', 'LISTOPADA', 'GRUDNIA']; 
         
         function loopStep() { 
-          clearAllTimers(); 
-          line1.innerHTML = ''; 
-          line2.innerHTML = ''; 
-          
+          clearTimeout(infoLoopTimeout); clearInterval(textDisplayInterval); 
+          line1.innerHTML = ''; line2.innerHTML = ''; 
           let nextStepDelay = 7500; 
           
           switch(loopState) { 
             case 0: 
+              const lastStation = schedule[schedule.length - 1];
+              const arrivalTime = lastStation && lastStation.przyjazd ? lastStation.przyjazd.substring(0, 5) : '??:??';
+              displayText(line1, 'POCIĄG ' + trainInfo + ' ' + trainName.toUpperCase()); 
+              displayText(line2, 'STACJA KOŃCOWA: ' + destination.toUpperCase() + ' p.' + arrivalTime); 
+              if (playDestinationInLoop && isMaster) {
+                  playDestinationAnnouncement(); playDestinationInLoop = false; nextStepDelay = 5000;
+              } else { nextStepDelay = 3750; }
+              loopState = 1; 
+              break; 
+            case 1:
+              if (calculatedDelayMinutes > 4) {
+                  displayText(line1, 'OPÓŹNIENIE POCIĄGU:'); displayText(line2, `${calculatedDelayMinutes} MINUT.`);
+                  if (playDelayAnnouncement && isMaster) { 
+                      playSequential(['dzwiek/opoznienie_pociagu.mp3', `dzwiek/${calculatedDelayMinutes}.mp3`]); playDelayAnnouncement = false;
+                  }
+                  nextStepDelay = 5000; loopState = 2; 
+              } else { loopState = 2; nextStepDelay = 10; }
+              break;
+            case 2: 
               const remainingStations = schedule.slice(currentIndex); 
-              if (remainingStations.length <= 1) { 
-                // Jeśli ostatnia stacja lub tylko jedna stacja na trasie
-                displayText(line1, 'STACJA DOCELOWA: '); 
-                displayText(line2, remainingStations[0].nazwa_stacji.toUpperCase() + ' ' + getStationTimes(remainingStations[0])); 
-                loopState = 1; 
-                nextStepDelay = 7500; 
+              if (remainingStations.length <= 1) { loopState = 3; nextStepDelay = 10;
               } else { 
-                // Przewijanie trasy
                 displayText(line1, 'TRASA:'); 
-                // Użycie tylko nazwy stacji dla paska, aby był czytelniejszy
-                const routeString = remainingStations.map(s => `${s.nazwa_stacji.toUpperCase()} ${getStationTimes(s)}`).join('  -  '); 
-                const wrapper = document.createElement('div'); 
-                wrapper.className = 'ticker-wrapper'; 
-                const scrollingSpan = document.createElement('span'); 
-                scrollingSpan.className = 'scrolling-text'; 
-                scrollingSpan.textContent = routeString; 
-                const duration = Math.max(15, routeString.length * 0.25); // Minimalna długość animacji 15s
-                scrollingSpan.style.animation = `marquee ${duration}s linear`; 
-                wrapper.appendChild(scrollingSpan); 
-                line2.appendChild(wrapper); 
-                nextStepDelay = (duration * 1000) + 2000; 
-                loopState = 1; 
+                const routeString = remainingStations.map(s => {
+                    let stStr = `${s.nazwa_stacji.toUpperCase()} ${getStationTimes(s)}`;
+                    const initialDelay = calculatedDelayMinutes;
+                    let correctedDelay = initialDelay;
+                    const passed = remainingStations.indexOf(s); 
+                    if (passed > 0) correctedDelay = Math.max(0, initialDelay - (passed * 0.25));
+                    if (Math.ceil(correctedDelay) > 0) stStr += ` (+${Math.ceil(correctedDelay)})`;
+                    return stStr;
+                }).join('  -  ');
+                const wrapper = document.createElement('div'); wrapper.className = 'ticker-wrapper'; 
+                const scrollingSpan = document.createElement('span'); scrollingSpan.className = 'scrolling-text'; 
+                const duration = Math.max(15, routeString.length * 0.25);
+                scrollingSpan.textContent = routeString; scrollingSpan.style.animation = `marquee ${duration}s linear infinite`; 
+                wrapper.appendChild(scrollingSpan); line2.appendChild(wrapper); 
+                nextStepDelay = (duration * 1000) + 2000; loopState = 3; 
               } 
               break; 
-            case 1: 
-              displayText(line1, 'POCIĄG ' + trainInfo + ' ' + trainName.toUpperCase()); 
-              displayText(line2, 'STACJA DOCELOWA: ' + destination.toUpperCase()); 
-              loopState = 2; 
-              break; 
-            case 2: 
+            case 3: 
               const now = new Date(); 
               const dateStr = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`; 
-              const timeStr = now.toTimeString().split(' ')[0].substring(0, 8); // Dodano sekundy
-              displayText(line1, dateStr); 
-              displayText(line2, `${weekDays[now.getDay()]} ${timeStr}`); 
+              const timeStr = now.toTimeString().split(' ')[0].substring(0, 8); 
+              displayText(line1, dateStr); displayText(line2, `${weekDays[now.getDay()]} ${timeStr}`); 
               loopState = 0; 
               break; 
           } 
           infoLoopTimeout = setTimeout(loopStep, nextStepDelay); 
         } 
-        loopStep(); 
+        loopStep();
       }
       
-      // ZMODYFIKOWANA FUNKCJA: Używamy teraz updateDisplay(true) do odtwarzania dźwięku przy nawigacji
       function navigate(direction) { 
-        clearAllTimers(); 
-        
-        // Zapisujemy poprzednie wartości, by sprawdzić, czy nastąpiła faktyczna zmiana stacji
-        const prevIndex = currentIndex;
-        const prevMode = displayMode;
+        isMaster = true; // Kliknięcie = stajemy się Masterem
+
+        audioPlayer.pause(); audioPlayer.currentTime = 0; audioPlayer.onended = null;
         
         if (direction === 'next') { 
           if (displayMode === 1) { 
+            saveAutoTime(schedule[currentIndex].id_szczegolu, 'odjazd');
             if (currentIndex < schedule.length - 1) { 
-              currentIndex++; 
-              displayMode = 0; // Następna stacja
+              lastDepartureTime = schedule[currentIndex].odjazd;
+              currentIndex++; displayMode = 0; 
+              playDelayAnnouncement = true; playDestinationInLoop = true;
             }
           } else { 
-            displayMode = 1; // Aktualna stacja
+            displayMode = 1; 
+            saveAutoTime(schedule[currentIndex].id_szczegolu, 'przyjazd');
           } 
         } else if (direction === 'prev') { 
           if (displayMode === 0) { 
             if (currentIndex > 0) { 
-              currentIndex--; 
-              displayMode = 1; // Aktualna stacja
+              lastDepartureTime = schedule[currentIndex - 1].odjazd; 
+              currentIndex--; displayMode = 1; 
+              playDelayAnnouncement = true; playDestinationInLoop = true; 
             }
-          } else { 
-            displayMode = 0; // Następna stacja
-          } 
+          } else { displayMode = 0; } 
         }
         
-        // Odtwarzamy dźwięk tylko, jeśli zmienił się tryb lub stacja (lub jest to włączenie pierwszej stacji)
-        const playAudio = (prevIndex !== currentIndex) || (prevMode !== displayMode);
-
-        updateDisplay(playAudio);
+        if (currentIndex === 0) lastDepartureTime = null;
+        
+        sendSyncUpdate();
+        updateDisplay(); 
       }
       
       if (schedule.length > 0) { 
-        updateDisplay(); // Odtworzy dźwięk przy pierwszym załadowaniu
+        isMaster = true; // Start jako Master, dopóki nie dostaniemy sync
+        if (displayMode === 0) {
+             if (currentIndex > 0) lastDepartureTime = schedule[currentIndex - 1].odjazd;
+             playDestinationInLoop = true; playDelayAnnouncement = true; 
+        }
+        updateDisplay(); 
       }
     </script>
 </body>

@@ -372,7 +372,7 @@ function format_days($days_str) {
 
                             // Get intermediate stops
                             $current_kolejnosc = $row['kolejnosc']; // Pobieramy 'kolejnosc' z aktualnego wiersza odjazdu
-                            $sql_przystanki = "SELECT s.nazwa_stacji, sr.przyjazd, sr.uwagi_postoju 
+                            $sql_przystanki = "SELECT s.nazwa_stacji, sr.przyjazd, sr.uwagi_postoju, s.wytluszczony_plakat 
                                             FROM szczegoly_rozkladu sr 
                                             JOIN stacje s ON sr.id_stacji = s.id_stacji 
                                             WHERE sr.id_przejazdu = ? 
@@ -388,7 +388,14 @@ function format_days($days_str) {
                             $stacje_posrednie_str = "";
                             while ($przystanek = mysqli_fetch_assoc($result_przystanki)) {
                                 if ($przystanek['uwagi_postoju'] == 'ph') {
-                                     $stacje_posrednie_str .= htmlspecialchars($przystanek['nazwa_stacji']) . " " . date("H:i", strtotime($przystanek['przyjazd'])) . ", ";
+                                    $stacja_nazwa = htmlspecialchars($przystanek['nazwa_stacji']);
+                                    
+                                    // WARUNKOWE POGRUBIENIE
+                                    if ($przystanek['wytluszczony_plakat']) {
+                                        $stacja_nazwa = "<strong>{$stacja_nazwa}</strong>";
+                                    }
+                                    
+                                    $stacje_posrednie_str .= $stacja_nazwa . " " . date("H:i", strtotime($przystanek['przyjazd'])) . ", ";
                                 }
                             }
                             $stacje_posrednie_str = rtrim($stacje_posrednie_str, ", ");

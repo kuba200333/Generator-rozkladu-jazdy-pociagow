@@ -71,13 +71,18 @@ $wszystkie_stacje = mysqli_fetch_all($wszystkie_stacje_res, MYSQLI_ASSOC);
             <div>
                 <h3>Wszystkie dostępne stacje</h3>
                 <select id="stacje_dostepne" multiple class="station-list">
-                    <?php foreach($wszystkie_stacje as $stacja): if (!in_array($stacja['id_stacji'], $stacje_na_trasie_ids)): ?>
+                    <?php 
+                    // !!! ZMIANA 1: Lista dostępnych stacji jest zawsze pełna (nie filtrujemy) !!!
+                    foreach($wszystkie_stacje as $stacja): 
+                    ?>
                         <option value="<?= $stacja['id_stacji'] ?>"><?= htmlspecialchars($stacja['nazwa_stacji']) ?></option>
-                    <?php endif; endforeach; ?>
+                    <?php 
+                    endforeach; 
+                    ?>
                 </select>
             </div>
             <div class="controls">
-                <button type="button" onclick="addStations()">&gt;</button>
+                <button type="button" onclick="copyStations()">&gt;</button>
                 <button type="button" onclick="removeStations()">&lt;</button>
             </div>
             <div>
@@ -104,15 +109,30 @@ $wszystkie_stacje = mysqli_fetch_all($wszystkie_stacje_res, MYSQLI_ASSOC);
         const dostepne = document.getElementById('stacje_dostepne');
         const naTrasie = document.getElementById('stacje_na_trasie');
         const szablon = document.getElementById('szablon_trasy');
-
-        function moveOptions(fromSelect, toSelect) {
-            Array.from(fromSelect.selectedOptions).forEach(option => {
-                toSelect.appendChild(option);
+        
+        // ZMIANA 2: Nowa funkcja do KOPIOWANIA (duplikowania) stacji
+        function copyStations() {
+            Array.from(dostepne.selectedOptions).forEach(option => {
+                // Tworzymy KLON opcji, zamiast przenosić oryginał
+                const newOption = option.cloneNode(true);
+                naTrasie.appendChild(newOption);
             });
         }
-        function addStations() { moveOptions(dostepne, naTrasie); }
-        function removeStations() { moveOptions(naTrasie, dostepne); }
+        
+        // Stara funkcja addStations zostaje zastąpiona przez copyStations.
+        // Zmieniamy wywołanie w HTML (w sekcji Controls) na copyStations.
+        // function addStations() { moveOptions(dostepne, naTrasie); } 
 
+        // Funkcja do usuwania pozostaje bez zmian
+        function removeStations() { 
+            // W przeciwieństwie do poprzedniej wersji, usunięta stacja NIE wraca do listy dostępnych, 
+            // ponieważ lista dostępnych jest zawsze stała (pełna).
+            Array.from(naTrasie.selectedOptions).forEach(option => {
+                option.remove();
+            });
+        }
+
+        // Funkcje przenoszenia i zaznaczania wszystkich pozostają bez zmian
         function move(direction) {
             const selected = Array.from(naTrasie.selectedOptions);
             if (direction === 'up') {
@@ -136,30 +156,32 @@ $wszystkie_stacje = mysqli_fetch_all($wszystkie_stacje_res, MYSQLI_ASSOC);
             Array.from(naTrasie.options).forEach(option => option.selected = true);
         }
         
+        // ZMIANA 3: Poprawiona funkcja ładowania szablonu
         async function loadTemplate() {
             const id = szablon.value;
             if (!id) return;
             
+            // Usunięcie filtracji z JS - teraz jest zawsze pełna lista dostępnych
+            // dostepne.innerHTML = '';
+            naTrasie.innerHTML = ''; // Czyścimy tylko stacje na trasie
+            
             const response = await fetch(`api_get_route_stations.php?id=${id}`);
             const data = await response.json();
             
-            dostepne.innerHTML = '';
-            naTrasie.innerHTML = '';
-            
-            const stacjeNaTrasieSzablonuIds = data.map(s => parseInt(s.id_stacji));
-            const wszystkieStacje = <?php echo json_encode($wszystkie_stacje); ?>;
-
-            wszystkieStacje.forEach(stacja => {
-                const option = new Option(stacja.nazwa_stacji, stacja.id_stacji);
-                if (!stacjeNaTrasieSzablonuIds.includes(parseInt(stacja.id_stacji))) {
-                    dostepne.appendChild(option);
-                }
-            });
-
+            // Ponieważ lista "Dostępne stacje" jest teraz pełna i statyczna, 
+            // wystarczy odświeżyć listę "Stacje na trasie" na podstawie szablonu.
             data.forEach(stacja => {
                  const option = new Option(stacja.nazwa_stacji, stacja.id_stacji);
                  naTrasie.appendChild(option);
             });
+            
+            // Opcjonalnie: Upewniamy się, że lista dostępnych stacji jest odtworzona (choć w tym przypadku nie jest to ściśle konieczne, bo jej zawartość nie ulegała zmianie w nowym podejściu)
+            // const wszystkieStacje = <?php echo json_encode($wszystkie_stacje); ?>;
+            // dostepne.innerHTML = '';
+            // wszystkieStacje.forEach(stacja => {
+            //     const option = new Option(stacja.nazwa_stacji, stacja.id_stacji);
+            //     dostepne.appendChild(option);
+            // });
         }
     </script>
 </body>

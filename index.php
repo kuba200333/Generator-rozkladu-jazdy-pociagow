@@ -20,7 +20,9 @@
     <div class="container">
         <h1>Panel Zarządzania Rozkładami Jazdy</h1>
         <ul class="menu">
+            <li><a href="panel_dyzurnego.php">🖥️ Panel Dyżurnego (SWDR)</a></li>
             <li><a href="generator_rozkladu.php">➡️ Generator Rozkładu Jazdy</a></li>
+            <li><a href="zarzadzanie_trasa.php">Edycja trasy pociągu</a></li>
             <li><a href="podglad_maszynisty.php">📄 Podgląd dla Maszynisty</a></li>
             <li><a href="przegladarka_rozkladow.php">📋 Przeglądarka Rozkładów (Plakaty)</a></li>
             <li><a href="wyswietlacz_led.php">🟧 Wyświetlacz LED w Pociągu</a></li>

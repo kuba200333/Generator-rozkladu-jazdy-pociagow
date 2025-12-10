@@ -11,35 +11,63 @@ $available_symbols = [
     'przewijak' => 'Miejsce do przewijania dziecka', 'duzy_bagaz' => 'Miejsce na duży bagaż'
 ];
 
-$id_trasy = $_SESSION['id_trasy'] ?? null;
+// --- LOGIKA RESETOWANIA SESJI PRZY ZMIANIE TRASY ---
+$czy_zmiana_trasy = false;
+
+// Pobieramy ID z POST (jeśli wysłano) lub z SESJI
+$nowe_id_trasy = $_POST['id_trasy'] ?? null;
+$stare_id_trasy = $_SESSION['id_trasy'] ?? null;
+
+// Sprawdzamy, czy nastąpiła zmiana trasy w formularzu
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['id_trasy'])) {
-    $id_trasy = $_POST['id_trasy'];
+    if ($nowe_id_trasy != $stare_id_trasy) {
+        $czy_zmiana_trasy = true;
+        
+        // KOMPLETNE CZYSZCZENIE SESJI ("DO GOLASA")
+        unset($_SESSION['postoje']);
+        unset($_SESSION['czas_odjazdu']);
+        unset($_SESSION['nr_poc']);
+        unset($_SESSION['id_typu_pociagu']);
+        unset($_SESSION['nazwa_pociagu']);
+        unset($_SESSION['daty_kursowania']);
+        unset($_SESSION['dni_kursowania']);
+        unset($_SESSION['symbole']);
+        
+        // Ustawiamy nowe ID trasy
+        $_SESSION['id_trasy'] = $nowe_id_trasy;
+    }
 }
-$_SESSION['id_trasy'] = $id_trasy;
 
-// Obsługa formularza
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $_SESSION['nr_poc'] = $_POST['nr_poc'] ?? '';
-    $_SESSION['id_typu_pociagu'] = $_POST['id_typu_pociagu'] ?? null;
-    $_SESSION['nazwa_pociagu'] = $_POST['nazwa_pociagu'] ?? '';
-    $_SESSION['daty_kursowania'] = $_POST['daty_kursowania'] ?? '';
-    $_SESSION['dni_kursowania'] = $_POST['dni_kursowania'] ?? '';
+// Ustawiamy aktualne ID trasy do użycia w reszcie skryptu
+$id_trasy = $_SESSION['id_trasy'] ?? null;
+
+
+// --- OBSŁUGA FORMULARZA ---
+// Wykonujemy zapamiętywanie danych TYLKO jeśli NIE zmieniamy trasy.
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$czy_zmiana_trasy) {
+    
+    $_SESSION['nr_poc'] = $_POST['nr_poc'] ?? ($_SESSION['nr_poc'] ?? '');
+    $_SESSION['id_typu_pociagu'] = $_POST['id_typu_pociagu'] ?? ($_SESSION['id_typu_pociagu'] ?? null);
+    $_SESSION['nazwa_pociagu'] = $_POST['nazwa_pociagu'] ?? ($_SESSION['nazwa_pociagu'] ?? '');
+    $_SESSION['daty_kursowania'] = $_POST['daty_kursowania'] ?? ($_SESSION['daty_kursowania'] ?? '');
+    $_SESSION['dni_kursowania'] = $_POST['dni_kursowania'] ?? ($_SESSION['dni_kursowania'] ?? '');
     $_SESSION['symbole'] = $_POST['symbole'] ?? [];
-    $_SESSION['czas_odjazdu'] = $_POST['czas'] ?? '';
+    $_SESSION['czas_odjazdu'] = $_POST['czas'] ?? ($_SESSION['czas_odjazdu'] ?? '');
 
+    // Aktualizacja postojów
     if (isset($_POST['postoje'])) {
-        foreach ($_POST['postoje'] as $stacja_id => $dane) {
-            if (!isset($_SESSION['postoje'][$stacja_id])) {
-                $_SESSION['postoje'][$stacja_id] = [];
+        foreach ($_POST['postoje'] as $index => $dane) {
+            if (!isset($_SESSION['postoje'][$index])) {
+                $_SESSION['postoje'][$index] = [];
             }
-            $_SESSION['postoje'][$stacja_id] = array_merge($_SESSION['postoje'][$stacja_id], $dane);
+            $_SESSION['postoje'][$index] = array_merge($_SESSION['postoje'][$index], $dane);
         }
     }
     
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
             case 'generuj':
-                unset($_SESSION['postoje']);
+                // Odświeżenie widoku z zachowaniem danych sesji
                 break;
             
             case 'set_all':
@@ -58,8 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 foreach ($stacje_list_for_action as $index => $stacja) {
                     $is_eligible = !($stacja['id_typu_stacji'] >= 3 || $index == 0 || $index == count($stacje_list_for_action) - 1);
                     if ($is_eligible) {
-                        $_SESSION['postoje'][$stacja['id_stacji']]['typ'] = $global_stop_type;
-                        $_SESSION['postoje'][$stacja['id_stacji']]['czas'] = $global_stop_time;
+                        $_SESSION['postoje'][$index]['typ'] = $global_stop_type;
+                        $_SESSION['postoje'][$index]['czas'] = $global_stop_time;
                     }
                 }
                 break;
@@ -214,27 +242,103 @@ if (isset($_GET['status'])) {
 
             $godzina_biezaca = isset($_SESSION['czas_odjazdu']) && !empty($_SESSION['czas_odjazdu']) ? strtotime($_SESSION['czas_odjazdu']) : strtotime("00:00");
             $czas_przejazdu_poprzedni = 0;
-            $poprzednia_stacja_przelot = false; // Inicjalizacja flagi
+            $poprzednia_stacja_przelot = false;
 
             foreach ($full_stacje_list as $index => $stacja) {
                 $id_stacji_biezacej = $stacja['id_stacji'];
 
-                // --- NOWA LOGIKA OBLICZANIA CZASU ---
+                // --- LOGIKA OBLICZANIA CZASU ---
                 $czas_do_dodania = $czas_przejazdu_poprzedni;
-                // Odejmujemy czas tylko, jeśli to nie jest pierwsza stacja na trasie
-                if ($poprzednia_stacja_przelot && $index > 0) { 
-                    $czas_do_dodania -=30; // Odejmij 15 sekund, jeśli poprzednia stacja była przelotem
+                if ($poprzednia_stacja_przelot && $index > 0 && $czas_przejazdu_poprzedni > 0) { 
+                    $czas_do_dodania -=30;
                 }
                 $godzina_biezaca += $czas_do_dodania;
-                // --- KONIEC NOWEJ LOGIKI ---
                 
                 $przyjazd_ts = $godzina_biezaca;
 
-                $postoj_data = $_SESSION['postoje'][$id_stacji_biezacej] ?? [];
+                // Odczyt danych postoju z sesji
+                $postoj_data = $_SESSION['postoje'][$index] ?? [];
+                
                 $postoj_val = $postoj_data['czas'] ?? '00:00:30';
                 $typ_postoju_val = $postoj_data['typ'] ?? '';
                 $peron_val = $postoj_data['peron'] ?? '';
                 $tor_val = $postoj_data['tor'] ?? '';
+
+                // --- AUTOUZUPEŁNIANIE PERONU I TORU (LOGIKA WĘZŁOWA) ---
+                if (empty($peron_val) && empty($tor_val)) {
+                    $id_stacji_poprzedniej = ($index > 0) ? $full_stacje_list[$index - 1]['id_stacji'] : null;
+                    $id_stacji_nastepnej = ($index < $liczba_stacji - 1) ? $full_stacje_list[$index + 1]['id_stacji'] : null;
+                    
+                    $found_history = false;
+
+                    // 1. NAJLEPSZA OPCJA: Mamy Poprzednią i Następną (Jesteśmy w środku trasy, np. na węźle)
+                    // Szukamy przebiegu: PREV -> CURR -> NEXT
+                    if ($id_stacji_poprzedniej && $id_stacji_nastepnej) {
+                        $sql_wezel = "SELECT t2.peron, t2.tor 
+                                      FROM szczegoly_rozkladu t1 
+                                      JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
+                                      JOIN szczegoly_rozkladu t3 ON t2.id_przejazdu = t3.id_przejazdu 
+                                      WHERE t1.id_stacji = ? 
+                                        AND t2.id_stacji = ? 
+                                        AND t3.id_stacji = ?
+                                        AND t2.kolejnosc = t1.kolejnosc + 1
+                                        AND t3.kolejnosc = t2.kolejnosc + 1
+                                        AND t2.peron != '' 
+                                      ORDER BY t2.id_przejazdu DESC LIMIT 1";
+                        
+                        $stmt = mysqli_prepare($conn, $sql_wezel);
+                        mysqli_stmt_bind_param($stmt, "iii", $id_stacji_poprzedniej, $id_stacji_biezacej, $id_stacji_nastepnej);
+                        mysqli_stmt_execute($stmt);
+                        $res = mysqli_stmt_get_result($stmt);
+                        if ($row = mysqli_fetch_assoc($res)) {
+                            $peron_val = $row['peron'];
+                            $tor_val = $row['tor'];
+                            $found_history = true;
+                        }
+                    }
+
+                    // 2. OPCJA: Startowa lub brak dopasowania węzła - szukamy po kierunku CURR -> NEXT
+                    if (!$found_history && $id_stacji_nastepnej) {
+                        $sql_start = "SELECT t1.peron, t1.tor 
+                                      FROM szczegoly_rozkladu t1 
+                                      JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
+                                      WHERE t1.id_stacji = ? 
+                                        AND t2.id_stacji = ? 
+                                        AND t2.kolejnosc = t1.kolejnosc + 1
+                                        AND t1.peron != '' 
+                                      ORDER BY t1.id_przejazdu DESC LIMIT 1";
+                        $stmt = mysqli_prepare($conn, $sql_start);
+                        mysqli_stmt_bind_param($stmt, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
+                        mysqli_stmt_execute($stmt);
+                        $res = mysqli_stmt_get_result($stmt);
+                        if ($row = mysqli_fetch_assoc($res)) {
+                            $peron_val = $row['peron'];
+                            $tor_val = $row['tor'];
+                            $found_history = true;
+                        }
+                    }
+
+                    // 3. OPCJA: Końcowa lub brak innych - szukamy po przyjeździe z PREV -> CURR
+                    if (!$found_history && $id_stacji_poprzedniej) {
+                        $sql_end = "SELECT t2.peron, t2.tor 
+                                    FROM szczegoly_rozkladu t1 
+                                    JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
+                                    WHERE t1.id_stacji = ? 
+                                      AND t2.id_stacji = ? 
+                                      AND t2.kolejnosc = t1.kolejnosc + 1
+                                      AND t2.peron != '' 
+                                    ORDER BY t2.id_przejazdu DESC LIMIT 1";
+                        $stmt = mysqli_prepare($conn, $sql_end);
+                        mysqli_stmt_bind_param($stmt, "ii", $id_stacji_poprzedniej, $id_stacji_biezacej);
+                        mysqli_stmt_execute($stmt);
+                        $res = mysqli_stmt_get_result($stmt);
+                        if ($row = mysqli_fetch_assoc($res)) {
+                            $peron_val = $row['peron'];
+                            $tor_val = $row['tor'];
+                        }
+                    }
+                }
+                // --- KONIEC LOGIKI WĘZŁOWEJ ---
 
                 $is_postoj = !($stacja['id_typu_stacji'] >= 3 || $index == 0 || $index == $liczba_stacji - 1 || empty($typ_postoju_val));
                 $postoj_sec = $is_postoj ? (strtotime($postoj_val) - strtotime("00:00:00")) : 0;
@@ -271,12 +375,12 @@ if (isset($_GET['status'])) {
                     $odjazd_do_zapisu = ($index == $liczba_stacji - 1) ? null : date("H:i:s", $odjazd_ts);
                 }
                 
-                echo "<td><input type='text' class='platform-track' name='postoje[{$id_stacji_biezacej}][peron]' value='{$peron_val}'></td>";
-                echo "<td><input type='text' class='platform-track' name='postoje[{$id_stacji_biezacej}][tor]' value='{$tor_val}'></td>";
+                echo "<td><input type='text' class='platform-track' name='postoje[{$index}][peron]' value='{$peron_val}'></td>";
+                echo "<td><input type='text' class='platform-track' name='postoje[{$index}][tor]' value='{$tor_val}'></td>";
 
                 echo "<td style='text-align:center;'>";
                 if ($stacja['id_typu_stacji'] < 3 && $index > 0 && $index < $liczba_stacji - 1) {
-                    echo "<select id='postoj_select' name='postoje[{$id_stacji_biezacej}][typ]' onchange='this.form.submit()'>";
+                    echo "<select id='postoj_select' name='postoje[{$index}][typ]' onchange='this.form.submit()'>";
                     echo "<option value='' " . ($typ_postoju_val == "" ? "selected" : "") . ">-</option>";
                     $postoje_res = mysqli_query($conn, "SELECT typ_postoj FROM postoje");
                     while($p_row = mysqli_fetch_assoc($postoje_res)) {
@@ -289,22 +393,32 @@ if (isset($_GET['status'])) {
 
                 echo "<td style='text-align:center;'>";
                 if ($is_postoj) {
-                    echo "<input id='postoj_input' type='time' step='30' name='postoje[{$id_stacji_biezacej}][czas]' value='{$postoj_val}' onchange='this.form.submit()'>";
+                    echo "<input id='postoj_input' type='time' step='30' name='postoje[{$index}][czas]' value='{$postoj_val}' onchange='this.form.submit()'>";
                 } else { echo "|"; }
                 echo "</td>";
                 echo "</tr>";
+                
+                if ($index == 0 || $index == $liczba_stacji - 1) {
+                    $typ_postoju_do_zapisu = "";
+                } 
+                else if (empty($typ_postoju_val)) {
+                    $typ_postoju_do_zapisu = "";
+                } 
+                else {
+                    $typ_postoju_do_zapisu = $typ_postoju_val;
+                }
 
                 // Ukryte pola do zapisu
                 echo "<input type='hidden' name='zapis[{$index}][id_stacji]' value='{$id_stacji_biezacej}'>";
                 echo "<input type='hidden' name='zapis[{$index}][kolejnosc]' value='" . ($index+1) . "'>";
                 echo "<input type='hidden' name='zapis[{$index}][przyjazd]' value='{$przyjazd_do_zapisu}'>";
                 echo "<input type='hidden' name='zapis[{$index}][odjazd]' value='{$odjazd_do_zapisu}'>";
-                echo "<input type='hidden' name='zapis[{$index}][uwagi_postoju]' value='{$typ_postoju_val}'>";
+                echo "<input type='hidden' name='zapis[{$index}][uwagi_postoju]' value='{$typ_postoju_do_zapisu}'>";
                 echo "<input type='hidden' name='zapis[{$index}][peron]' value='{$peron_val}'>";
                 echo "<input type='hidden' name='zapis[{$index}][tor]' value='{$tor_val}'>";
                 
                 $godzina_biezaca = $odjazd_ts;
-                $poprzednia_stacja_przelot = !$is_postoj; // Ustaw flagę dla następnej iteracji
+                $poprzednia_stacja_przelot = !$is_postoj;
             }
             ?>
         </table>

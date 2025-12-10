@@ -42,7 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['zapis'])) {
         }
 
         // 2. Wstawienie wszystkich szczegółów do `szczegoly_rozkladu` z nowymi danymi
-        $stmt2 = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        // ZMIANA: Dodano kolumny przyjazd_rzecz i odjazd_rzecz do zapytania
+        $stmt2 = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, przyjazd_rzecz, odjazd_rzecz, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         
         foreach ($dane_do_zapisu as $wpis) {
             $przyjazd = empty($wpis['przyjazd']) ? null : $wpis['przyjazd'];
@@ -50,12 +51,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['zapis'])) {
             $peron = empty($wpis['peron']) ? null : $wpis['peron'];
             $tor = empty($wpis['tor']) ? null : $wpis['tor'];
             
-            mysqli_stmt_bind_param($stmt2, "iiisssss", 
+            // ZMIANA: Przepisujemy godziny planowe do rzeczywistych na start
+            $przyjazd_rzecz = $przyjazd;
+            $odjazd_rzecz = $odjazd;
+            
+            // ZMIANA: Zaktualizowano typy zmiennych (doszły 2 stringi) i listę zmiennych w bind_param
+            mysqli_stmt_bind_param($stmt2, "iiisssssss", 
                 $id_przejazdu, 
                 $wpis['id_stacji'], 
                 $wpis['kolejnosc'], 
                 $przyjazd, 
                 $odjazd, 
+                $przyjazd_rzecz, // Wstawiamy to samo co w planie
+                $odjazd_rzecz,   // Wstawiamy to samo co w planie
                 $wpis['uwagi_postoju'],
                 $peron,
                 $tor

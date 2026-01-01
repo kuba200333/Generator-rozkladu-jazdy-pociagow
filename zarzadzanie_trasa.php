@@ -2,72 +2,95 @@
 session_start();
 require 'db_config.php';
 
-// Helper do formatowania czasu przesunięcia dla MySQL
-function formatShift($seconds) {
-    $sign = $seconds < 0 ? '-' : '';
-    $seconds = abs($seconds);
-    return $sign . gmdate("H:i:s", $seconds);
+// Helper do formatowania czasu opóźnienia dla MySQL
+function calculateDelayStr($timestamp_rzecz, $timestamp_plan) {
+    if ($timestamp_rzecz - $timestamp_plan > 43200) $timestamp_rzecz -= 86400;
+    if ($timestamp_plan - $timestamp_rzecz > 43200) $timestamp_rzecz += 86400;
+
+    $diff = $timestamp_rzecz - $timestamp_plan;
+    
+    $sign = $diff < 0 ? '-' : '';
+    $diff = abs($diff);
+    $h = floor($diff / 3600);
+    $m = floor(($diff / 60) % 60);
+    $s = $diff % 60;
+    
+    return sprintf("%s%02d:%02d:%02d", $sign, $h, $m, $s);
 }
 
 // --- LOGIKA OBSŁUGI ZMIAN ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
-    // 1. ZMIANA STATUSU (Odwołany / ZKA)
+    // 1. ZMIANA STATUSU (Odwołany / ZKA / Przywracanie)
     if (isset($_POST['action']) && $_POST['action'] == 'update_status') {
         $id_szczegolu = (int)$_POST['id_szczegolu'];
-        $czy_odwolany = isset($_POST['czy_odwolany']) ? 1 : 0;
+        
+        // Pobieramy wartość bezpośrednio (0 lub 1)
+        $czy_odwolany = (int)$_POST['czy_odwolany']; 
         $typ_transportu = $_POST['typ_transportu']; 
         
         $stmt = mysqli_prepare($conn, "UPDATE szczegoly_rozkladu SET czy_odwolany = ?, typ_transportu = ? WHERE id_szczegolu = ?");
         mysqli_stmt_bind_param($stmt, "isi", $czy_odwolany, $typ_transportu, $id_szczegolu);
         mysqli_stmt_execute($stmt);
         
+        // POPRAWKA: Przy zmianie statusu przywracamy czasy PLANOWE do RZECZYWISTYCH
+        // Zamiast NULL, wpisujemy tam wartości z kolumn 'przyjazd' i 'odjazd'
+        mysqli_query($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd WHERE id_szczegolu = $id_szczegolu");
+        
         header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $_POST['id_przejazdu']);
         exit;
     }
 
-    // 2. EDYCJA WIERSZA (CZASY, PERON, TOR, TYP POSTOJU) Z PROPAGACJĄ NA CZAS RZECZYWISTY
+    // 2. EDYCJA WIERSZA Z PROPAGACJĄ "TWARDĄ"
     if (isset($_POST['action']) && $_POST['action'] == 'save_row') {
         $id_szczegolu = (int)$_POST['id_szczegolu'];
         $id_przejazdu = (int)$_POST['id_przejazdu'];
         $kolejnosc = (int)$_POST['kolejnosc'];
         
-        // Dane z formularza
         $nowy_przyjazd_rzecz = !empty($_POST['przyjazd']) ? $_POST['przyjazd'] . ":00" : null;
         $nowy_odjazd_rzecz = !empty($_POST['odjazd']) ? $_POST['odjazd'] . ":00" : null;
         $peron = $_POST['peron'];
         $tor = $_POST['tor'];
-        $uwagi_postoju = $_POST['uwagi_postoju']; // Nowe pole
+        $uwagi_postoju = $_POST['uwagi_postoju'];
 
-        // Pobieramy stare dane, żeby policzyć różnicę
-        $q_old = mysqli_query($conn, "SELECT odjazd, odjazd_rzecz FROM szczegoly_rozkladu WHERE id_szczegolu = $id_szczegolu");
-        $row_old = mysqli_fetch_assoc($q_old);
+        $q_plan = mysqli_query($conn, "SELECT przyjazd, odjazd FROM szczegoly_rozkladu WHERE id_szczegolu = $id_szczegolu");
+        $row_plan = mysqli_fetch_assoc($q_plan);
         
-        $old_ref_time = $row_old['odjazd_rzecz'] ? $row_old['odjazd_rzecz'] : $row_old['odjazd'];
-
-        // Aktualizujemy edytowany wiersz (wraz z typem postoju)
         $stmt = mysqli_prepare($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = ?, odjazd_rzecz = ?, peron = ?, tor = ?, uwagi_postoju = ? WHERE id_szczegolu = ?");
         mysqli_stmt_bind_param($stmt, "sssssi", $nowy_przyjazd_rzecz, $nowy_odjazd_rzecz, $peron, $tor, $uwagi_postoju, $id_szczegolu);
         mysqli_stmt_execute($stmt);
 
-        // PROPAGACJA CZASU
-        if ($old_ref_time && $nowy_odjazd_rzecz) {
-            $diff = strtotime($nowy_odjazd_rzecz) - strtotime($old_ref_time);
-            
-            if ($diff != 0) {
-                $shift_str = formatShift($diff);
-                $sql_prop = "UPDATE szczegoly_rozkladu SET 
-                             przyjazd_rzecz = ADDTIME(IFNULL(przyjazd_rzecz, przyjazd), '$shift_str'), 
-                             odjazd_rzecz = ADDTIME(IFNULL(odjazd_rzecz, odjazd), '$shift_str') 
-                             WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $kolejnosc";
-                mysqli_query($conn, $sql_prop);
-            }
+        // --- PROPAGACJA ---
+        $delay_str = null;
+        $today = date('Y-m-d');
+
+        if ($nowy_odjazd_rzecz && $row_plan['odjazd']) {
+            $ts_rzecz = strtotime("$today $nowy_odjazd_rzecz");
+            $ts_plan = strtotime("$today " . $row_plan['odjazd']);
+            $delay_str = calculateDelayStr($ts_rzecz, $ts_plan);
+        } 
+        elseif ($nowy_przyjazd_rzecz && $row_plan['przyjazd']) {
+            $ts_rzecz = strtotime("$today $nowy_przyjazd_rzecz");
+            $ts_plan = strtotime("$today " . $row_plan['przyjazd']);
+            $delay_str = calculateDelayStr($ts_rzecz, $ts_plan);
         }
+
+        if ($delay_str !== null) {
+            $sql_prop = "UPDATE szczegoly_rozkladu SET 
+                         przyjazd_rzecz = ADDTIME(przyjazd, ?), 
+                         odjazd_rzecz = ADDTIME(odjazd, ?) 
+                         WHERE id_przejazdu = ? AND kolejnosc > ?";
+            
+            $stmt_prop = mysqli_prepare($conn, $sql_prop);
+            mysqli_stmt_bind_param($stmt_prop, "ssii", $delay_str, $delay_str, $id_przejazdu, $kolejnosc);
+            mysqli_stmt_execute($stmt_prop);
+        }
+
         header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
         exit;
     }
 
-    // 3. MASOWY ZAPIS (SAVE ALL)
+    // 3. MASOWY ZAPIS
     if (isset($_POST['action']) && $_POST['action'] == 'save_updates') {
         $id_przejazdu = (int)$_POST['id_przejazdu'];
         $rows = $_POST['rows'];
@@ -78,12 +101,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $odjazd_rzecz = !empty($data['odjazd']) ? $data['odjazd'] . ":00" : null;
             $peron = $data['peron'];
             $tor = $data['tor'];
-            $uwagi_postoju = $data['uwagi_postoju']; // Nowe pole
+            $uwagi_postoju = $data['uwagi_postoju'];
             
             $stmt = mysqli_prepare($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = ?, odjazd_rzecz = ?, peron = ?, tor = ?, uwagi_postoju = ? WHERE id_szczegolu = ?");
             mysqli_stmt_bind_param($stmt, "sssssi", $przyjazd_rzecz, $odjazd_rzecz, $peron, $tor, $uwagi_postoju, $id_szczegolu);
             mysqli_stmt_execute($stmt);
         }
+        header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
+        exit;
+    }
+
+    // 3A. RESETOWANIE CZASÓW (Przywracanie do planu)
+    if (isset($_POST['action']) && $_POST['action'] == 'reset_times') {
+        $id_przejazdu = (int)$_POST['id_przejazdu'];
+
+        // POPRAWKA KLUCZOWA: Kopiujemy czas PLANOWY do RZECZYWISTEGO
+        // Dzięki temu pola nie są puste (NULL), tylko wypełnione czasem z rozkładu (opóźnienie = 0)
+        $sql_reset = "UPDATE szczegoly_rozkladu 
+                      SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd 
+                      WHERE id_przejazdu = ?";
+
+        $stmt_reset = mysqli_prepare($conn, $sql_reset);
+        mysqli_stmt_bind_param($stmt_reset, "i", $id_przejazdu);
+        mysqli_stmt_execute($stmt_reset);
+        
         header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
         exit;
     }
@@ -106,20 +147,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit;
     }
 
-    // 5. DODAWANIE STACJI Z PRZELICZANIEM
+    // 5. DODAWANIE STACJI
     if (isset($_POST['action']) && $_POST['action'] == 'add_station') {
         $id_przejazdu = (int)$_POST['id_przejazdu'];
         $insert_after = (int)$_POST['insert_after'];
         $new_station_id = (int)$_POST['new_station_id'];
         $new_peron = $_POST['new_peron'];
         $new_tor = $_POST['new_tor'];
+        $new_postoj_typ = $_POST['new_postoj_typ'];
+        $new_postoj_czas = (int)$_POST['new_postoj_czas'];
+        if ($new_postoj_czas < 0) $new_postoj_czas = 0;
         
-        // Pobieramy dane o postoju z formularza
-        $new_postoj_typ = $_POST['new_postoj_typ']; // np. 'ph', 'pt'
-        $new_postoj_czas = (int)$_POST['new_postoj_czas']; // czas w minutach
-        if ($new_postoj_czas < 0) $new_postoj_czas = 0; // zabezpieczenie
-        
-        // A. Punkt odniesienia
         $prev_time_ref = "00:00:00"; 
         $id_prev_station = 0;
         
@@ -134,11 +172,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         }
 
-        // B. Następna stacja
-        $q_next = mysqli_query($conn, "SELECT id_stacji, przyjazd, przyjazd_rzecz FROM szczegoly_rozkladu WHERE id_przejazdu = $id_przejazdu AND kolejnosc = " . ($insert_after + 1));
-        $row_next = mysqli_fetch_assoc($q_next);
-
-        // C. Czas przejazdu
         $travel_time_sec = 300; 
         if ($id_prev_station > 0) {
             $q_odcinek1 = mysqli_query($conn, "SELECT czas_przejazdu FROM odcinki WHERE (id_stacji_A = $id_prev_station AND id_stacji_B = $new_station_id) OR (id_stacji_A = $new_station_id AND id_stacji_B = $id_prev_station) LIMIT 1");
@@ -148,24 +181,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         }
 
-        // D. Wyliczamy czasy dla nowej stacji
         $new_przyjazd_ts = strtotime($prev_time_ref) + $travel_time_sec;
-        
-        // Obliczamy odjazd: Przyjazd + Czas Postoju (w minutach)
-        // Jeśli czas postoju to 0, dodajemy symboliczne 60 sek na wymianę, chyba że user ustawił inaczej ręcznie
         $duration_sec = ($new_postoj_czas > 0) ? ($new_postoj_czas * 60) : 60;
         $new_odjazd_ts = $new_przyjazd_ts + $duration_sec; 
 
-        // Jeśli user podał ręcznie, to to bierzemy, inaczej wyliczone
         $form_przyjazd_rzecz = !empty($_POST['new_przyjazd']) ? $_POST['new_przyjazd'] . ":00" : date("H:i:s", $new_przyjazd_ts);
         $form_odjazd_rzecz = !empty($_POST['new_odjazd']) ? $_POST['new_odjazd'] . ":00" : date("H:i:s", $new_odjazd_ts);
-        
         $form_przyjazd_plan = $form_przyjazd_rzecz; 
         $form_odjazd_plan = $form_odjazd_rzecz;
 
-        // E. Oblicz poślizg dla reszty trasy
-        $time_shift_sec = 0;
-        if ($row_next) {
+        mysqli_query($conn, "UPDATE szczegoly_rozkladu SET kolejnosc = kolejnosc + 1 WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $insert_after");
+        $new_kolejnosc = $insert_after + 1;
+        
+        $stmt_ins = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, przyjazd_rzecz, odjazd_rzecz, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        mysqli_stmt_bind_param($stmt_ins, "iissssssss", $id_przejazdu, $new_station_id, $new_kolejnosc, $form_przyjazd_plan, $form_odjazd_plan, $form_przyjazd_rzecz, $form_odjazd_rzecz, $new_postoj_typ, $new_peron, $new_tor);
+        mysqli_stmt_execute($stmt_ins);
+
+        $q_next = mysqli_query($conn, "SELECT id_stacji, przyjazd FROM szczegoly_rozkladu WHERE id_przejazdu = $id_przejazdu AND kolejnosc = " . ($new_kolejnosc + 1));
+        if ($row_next = mysqli_fetch_assoc($q_next)) {
             $id_next_station = $row_next['id_stacji'];
             $travel_time_2_sec = 300; 
             
@@ -175,32 +208,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $travel_time_2_sec = ($parts[0] * 3600) + ($parts[1] * 60) + $parts[2];
             }
             
-            $expected_arrival_at_next = strtotime($form_odjazd_rzecz) + $travel_time_2_sec;
-            $original_ref = $row_next['przyjazd_rzecz'] ? $row_next['przyjazd_rzecz'] : $row_next['przyjazd'];
-            $original_arrival_at_next = strtotime($original_ref);
+            $rzecz_arrival_at_next = strtotime($form_odjazd_rzecz) + $travel_time_2_sec;
+            $plan_arrival_at_next = strtotime($row_next['przyjazd']);
             
-            $time_shift_sec = $expected_arrival_at_next - $original_arrival_at_next;
-        }
-
-        // F. Zapisz
-        mysqli_query($conn, "UPDATE szczegoly_rozkladu SET kolejnosc = kolejnosc + 1 WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $insert_after");
-        
-        $new_kolejnosc = $insert_after + 1;
-        
-        // Wstawiamy z wybranym typem postoju
-        $stmt_ins = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, przyjazd_rzecz, odjazd_rzecz, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        mysqli_stmt_bind_param($stmt_ins, "iissssssss", $id_przejazdu, $new_station_id, $new_kolejnosc, $form_przyjazd_plan, $form_odjazd_plan, $form_przyjazd_rzecz, $form_odjazd_rzecz, $new_postoj_typ, $new_peron, $new_tor);
-        mysqli_stmt_execute($stmt_ins);
-
-        // 3. Zaktualizuj resztę trasy
-        if ($time_shift_sec != 0) {
-            $shift_str = formatShift($time_shift_sec);
+            $delay_str = calculateDelayStr($rzecz_arrival_at_next, $plan_arrival_at_next);
+            
             $sql_prop = "UPDATE szczegoly_rozkladu SET 
-                         przyjazd_rzecz = ADDTIME(IFNULL(przyjazd_rzecz, przyjazd), '$shift_str'), 
-                         odjazd_rzecz = ADDTIME(IFNULL(odjazd_rzecz, odjazd), '$shift_str') 
+                         przyjazd_rzecz = ADDTIME(przyjazd, ?), 
+                         odjazd_rzecz = ADDTIME(odjazd, ?) 
                          WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $new_kolejnosc";
-            mysqli_query($conn, $sql_prop);
+            
+            $stmt_prop = mysqli_prepare($conn, $sql_prop);
+            mysqli_stmt_bind_param($stmt_prop, "ss", $delay_str, $delay_str);
+            mysqli_stmt_execute($stmt_prop);
         }
         
         header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
@@ -452,8 +472,14 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
                 </table>
                 
                 <div class="bulk-save-bar">
+                    <button type="button" class="btn-bulk" style="background: #e67e22;" onclick="confirmResetTimes(<?= $id_przejazdu ?>)">🗑️ RESETUJ CZASY RZECZYWISTE</button>
                     <button type="submit" class="btn-bulk">💾 ZAPISZ CAŁY ROZKŁAD (MASOWO)</button>
                 </div>
+            </form>
+
+            <form id="resetForm" method="POST" style="display:none;">
+                <input type="hidden" name="action" value="reset_times">
+                <input type="hidden" name="id_przejazdu" value="<?= $id_przejazdu ?>">
             </form>
             
             <form id="statusForm" method="POST" style="display:none;">
@@ -556,6 +582,12 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
         if(confirm('Czy na pewno chcesz usunąć tę stację z trasy?')) {
             document.getElementById('del_id').value = id;
             document.getElementById('deleteForm').submit();
+        }
+    }
+
+    function confirmResetTimes(id_przejazdu) {
+        if(confirm('Czy na pewno chcesz ZRESETOWAĆ WSZYSTKIE CZASY RZECZYWISTE dla tej trasy? Spowoduje to powrót do czasów PLANOWYCH.')) {
+            document.getElementById('resetForm').submit();
         }
     }
 </script>

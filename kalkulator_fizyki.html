@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Kalkulator Fizyki Pociągu</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #222; color: #fff; text-align: center; padding: 50px; }
+        .box { background: #333; padding: 30px; border-radius: 10px; display: inline-block; max-width: 400px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        input { padding: 10px; margin: 10px 0; width: 80%; font-size: 18px; text-align: center; border-radius: 5px; border: none; }
+        button { background: #e67e22; color: white; border: none; padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 5px; margin-top: 10px; font-weight: bold; width: 100%; }
+        button:hover { background: #d35400; }
+        .result { margin-top: 20px; font-size: 24px; font-weight: bold; color: #2ecc71; padding: 15px; border: 2px dashed #555; }
+        label { color: #aaa; font-size: 14px; display: block; margin-top: 10px; }
+        h2 { margin-top: 0; color: #f1c40f; }
+    </style>
+</head>
+<body>
+
+    <div class="box">
+        <h2>🚄 Kalkulator Fizyki (a/b)</h2>
+        
+        <label>Do jakiej prędkości testowałeś? (km/h)</label>
+        <input type="number" id="v_max" placeholder="np. 120">
+
+        <label>Ile czasu to zajęło? (sekundy)</label>
+        <input type="number" id="czas" placeholder="np. 25.5">
+
+        <button onclick="oblicz('acc')">Oblicz PRZYSPIESZENIE (a)</button>
+        <button onclick="oblicz('dec')" style="background-color: #c0392b;">Oblicz HAMOWANIE (b)</button>
+
+        <div id="wynik" class="result" style="display:none;"></div>
+        <div id="sql_hint" style="font-size:12px; color:#888; margin-top:10px; display:none;"></div>
+    </div>
+
+    <script>
+        function oblicz(typ) {
+            let v_kmh = parseFloat(document.getElementById('v_max').value);
+            let czas = parseFloat(document.getElementById('czas').value);
+
+            if (!v_kmh || !czas) {
+                alert("Wpisz prędkość i czas ze stopera!");
+                return;
+            }
+
+            // Zamiana km/h na m/s
+            let v_ms = v_kmh / 3.6;
+
+            // Wzór: a = v / t
+            let wynik = v_ms / czas;
+            wynik = wynik.toFixed(2); // Zaokrąglenie do 2 miejsc
+
+            let div = document.getElementById('wynik');
+            let hint = document.getElementById('sql_hint');
+            div.style.display = 'block';
+            hint.style.display = 'block';
+
+            if (typ === 'acc') {
+                div.innerHTML = `Przyspieszenie (a):<br>${wynik} m/s²`;
+                hint.innerText = `Wpisz to w bazie w kolumnie 'a_acc'`;
+                div.style.color = "#2ecc71"; // Zielony
+            } else {
+                div.innerHTML = `Hamowanie (b):<br>${wynik} m/s²`;
+                hint.innerText = `Wpisz to w bazie w kolumnie 'b_dec'`;
+                div.style.color = "#e74c3c"; // Czerwony
+            }
+        }
+    </script>
+
+</body>
+</html>

@@ -249,8 +249,28 @@ if (isset($_GET['status'])) {
 
                 // --- LOGIKA OBLICZANIA CZASU ---
                 $czas_do_dodania = $czas_przejazdu_poprzedni;
+
+                // Jeśli poprzednia stacja była "na przelocie" (nie zatrzymaliśmy się)
                 if ($poprzednia_stacja_przelot && $index > 0 && $czas_przejazdu_poprzedni > 0) { 
-                    $czas_do_dodania -=30;
+                    
+                    // Pobieramy dane o typie poprzedniej stacji
+                    $poprzednia_stacja_dane = $full_stacje_list[$index - 1];
+                    $typ_poprzedniej = $poprzednia_stacja_dane['id_typu_stacji']; // 3 = PODG
+
+                    if ($typ_poprzedniej == 3 || $typ_poprzedniej==5) {
+                        // DLA PODG: Czas w bazie jest już wyliczony na przelot -> Korekta 0 sek.
+                        $korekta = 0;
+                    } else {
+                        // DLA STACJI/PRZYSTANKÓW: Zyskujemy czas (brak hamowania/rozruchu) -> Korekta 40 sek.
+                        $korekta = 35;
+                    }
+
+                    $czas_do_dodania -= $korekta;
+
+                    // Zabezpieczenie: Minimalny czas przejazdu między punktami to 30 sekund
+                    if ($czas_do_dodania < 30) {
+                        $czas_do_dodania = 30;
+                    }
                 }
                 $godzina_biezaca += $czas_do_dodania;
                 
@@ -264,77 +284,91 @@ if (isset($_GET['status'])) {
                 $peron_val = $postoj_data['peron'] ?? '';
                 $tor_val = $postoj_data['tor'] ?? '';
 
-                // --- AUTOUZUPEŁNIANIE PERONU I TORU (LOGIKA WĘZŁOWA) ---
+
                 if (empty($peron_val) && empty($tor_val)) {
-                    $id_stacji_poprzedniej = ($index > 0) ? $full_stacje_list[$index - 1]['id_stacji'] : null;
-                    $id_stacji_nastepnej = ($index < $liczba_stacji - 1) ? $full_stacje_list[$index + 1]['id_stacji'] : null;
                     
-                    $found_history = false;
+                    $id_stacji_nastepnej = ($index < $liczba_stacji - 1) ? $full_stacje_list[$index + 1]['id_stacji'] : null;
+                    $id_stacji_poprzedniej = ($index > 0) ? $full_stacje_list[$index - 1]['id_stacji'] : null;
+                    
+                    $found_in_defaults = false;
 
-                    // 1. NAJLEPSZA OPCJA: Mamy Poprzednią i Następną (Jesteśmy w środku trasy, np. na węźle)
-                    // Szukamy przebiegu: PREV -> CURR -> NEXT
+                    // 1. NAJPIERW SZUKAMY "PEŁNEGO" DOPASOWANIA (Poprzednia -> Bieżąca -> Następna)
+                    // To jest kluczowe dla węzłów!
                     if ($id_stacji_poprzedniej && $id_stacji_nastepnej) {
-                        $sql_wezel = "SELECT t2.peron, t2.tor 
-                                      FROM szczegoly_rozkladu t1 
-                                      JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                      JOIN szczegoly_rozkladu t3 ON t2.id_przejazdu = t3.id_przejazdu 
-                                      WHERE t1.id_stacji = ? 
-                                        AND t2.id_stacji = ? 
-                                        AND t3.id_stacji = ?
-                                        AND t2.kolejnosc = t1.kolejnosc + 1
-                                        AND t3.kolejnosc = t2.kolejnosc + 1
-                                        AND t2.peron != '' 
-                                      ORDER BY t2.id_przejazdu DESC LIMIT 1";
+                        $stmt_def_full = mysqli_prepare($conn, "SELECT peron, tor FROM domyslne_perony WHERE id_stacji = ? AND id_kierunku = ? AND id_poprzedniej = ?");
+                        mysqli_stmt_bind_param($stmt_def_full, "iii", $id_stacji_biezacej, $id_stacji_nastepnej, $id_stacji_poprzedniej);
+                        mysqli_stmt_execute($stmt_def_full);
+                        $res_def_full = mysqli_stmt_get_result($stmt_def_full);
                         
-                        $stmt = mysqli_prepare($conn, $sql_wezel);
-                        mysqli_stmt_bind_param($stmt, "iii", $id_stacji_poprzedniej, $id_stacji_biezacej, $id_stacji_nastepnej);
-                        mysqli_stmt_execute($stmt);
-                        $res = mysqli_stmt_get_result($stmt);
-                        if ($row = mysqli_fetch_assoc($res)) {
-                            $peron_val = $row['peron'];
-                            $tor_val = $row['tor'];
-                            $found_history = true;
+                        if ($row_def = mysqli_fetch_assoc($res_def_full)) {
+                            $peron_val = $row_def['peron'];
+                            $tor_val = $row_def['tor'];
+                            $found_in_defaults = true;
                         }
                     }
 
-                    // 2. OPCJA: Startowa lub brak dopasowania węzła - szukamy po kierunku CURR -> NEXT
-                    if (!$found_history && $id_stacji_nastepnej) {
-                        $sql_start = "SELECT t1.peron, t1.tor 
-                                      FROM szczegoly_rozkladu t1 
-                                      JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                      WHERE t1.id_stacji = ? 
-                                        AND t2.id_stacji = ? 
-                                        AND t2.kolejnosc = t1.kolejnosc + 1
-                                        AND t1.peron != '' 
-                                      ORDER BY t1.id_przejazdu DESC LIMIT 1";
-                        $stmt = mysqli_prepare($conn, $sql_start);
-                        mysqli_stmt_bind_param($stmt, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
-                        mysqli_stmt_execute($stmt);
-                        $res = mysqli_stmt_get_result($stmt);
-                        if ($row = mysqli_fetch_assoc($res)) {
-                            $peron_val = $row['peron'];
-                            $tor_val = $row['tor'];
-                            $found_history = true;
+                    // 2. JEŚLI BRAK PEŁNEGO, SZUKAMY DOPASOWANIA OGÓLNEGO (Dowolna -> Bieżąca -> Następna)
+                    // Czyli reguły gdzie id_poprzedniej IS NULL
+                    if (!$found_in_defaults && $id_stacji_nastepnej) {
+                        $stmt_def_gen = mysqli_prepare($conn, "SELECT peron, tor FROM domyslne_perony WHERE id_stacji = ? AND id_kierunku = ? AND id_poprzedniej IS NULL");
+                        mysqli_stmt_bind_param($stmt_def_gen, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
+                        mysqli_stmt_execute($stmt_def_gen);
+                        $res_def_gen = mysqli_stmt_get_result($stmt_def_gen);
+                        
+                        if ($row_def = mysqli_fetch_assoc($res_def_gen)) {
+                            $peron_val = $row_def['peron'];
+                            $tor_val = $row_def['tor'];
+                            $found_in_defaults = true;
                         }
                     }
 
-                    // 3. OPCJA: Końcowa lub brak innych - szukamy po przyjeździe z PREV -> CURR
-                    if (!$found_history && $id_stacji_poprzedniej) {
-                        $sql_end = "SELECT t2.peron, t2.tor 
-                                    FROM szczegoly_rozkladu t1 
-                                    JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                    WHERE t1.id_stacji = ? 
-                                      AND t2.id_stacji = ? 
-                                      AND t2.kolejnosc = t1.kolejnosc + 1
-                                      AND t2.peron != '' 
-                                    ORDER BY t2.id_przejazdu DESC LIMIT 1";
-                        $stmt = mysqli_prepare($conn, $sql_end);
-                        mysqli_stmt_bind_param($stmt, "ii", $id_stacji_poprzedniej, $id_stacji_biezacej);
-                        mysqli_stmt_execute($stmt);
-                        $res = mysqli_stmt_get_result($stmt);
-                        if ($row = mysqli_fetch_assoc($res)) {
-                            $peron_val = $row['peron'];
-                            $tor_val = $row['tor'];
+                    // 3. JEŚLI NADAL NIC, UŻYWAMY HISTORII PRZEJAZDÓW (FALLBACK)
+                    if (!$found_in_defaults) {
+                        $found_history = false;
+
+                        // A. Logika historyczna tranzytowa: PREV -> CURR -> NEXT
+                        if ($id_stacji_poprzedniej && $id_stacji_nastepnej) {
+                            $sql_wezel = "SELECT t2.peron, t2.tor 
+                                          FROM szczegoly_rozkladu t1 
+                                          JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
+                                          JOIN szczegoly_rozkladu t3 ON t2.id_przejazdu = t3.id_przejazdu 
+                                          WHERE t1.id_stacji = ? 
+                                            AND t2.id_stacji = ? 
+                                            AND t3.id_stacji = ?
+                                            AND t2.kolejnosc = t1.kolejnosc + 1
+                                            AND t3.kolejnosc = t2.kolejnosc + 1
+                                            AND t2.peron != '' 
+                                          ORDER BY t2.id_przejazdu DESC LIMIT 1";
+                            
+                            $stmt = mysqli_prepare($conn, $sql_wezel);
+                            mysqli_stmt_bind_param($stmt, "iii", $id_stacji_poprzedniej, $id_stacji_biezacej, $id_stacji_nastepnej);
+                            mysqli_stmt_execute($stmt);
+                            $res = mysqli_stmt_get_result($stmt);
+                            if ($row = mysqli_fetch_assoc($res)) {
+                                $peron_val = $row['peron'];
+                                $tor_val = $row['tor'];
+                                $found_history = true;
+                            }
+                        }
+
+                        // B. Logika historyczna startowa: CURR -> NEXT
+                        if (!$found_history && $id_stacji_nastepnej) {
+                            $sql_start = "SELECT t1.peron, t1.tor 
+                                          FROM szczegoly_rozkladu t1 
+                                          JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
+                                          WHERE t1.id_stacji = ? 
+                                            AND t2.id_stacji = ? 
+                                            AND t2.kolejnosc = t1.kolejnosc + 1
+                                            AND t1.peron != '' 
+                                          ORDER BY t1.id_przejazdu DESC LIMIT 1";
+                            $stmt = mysqli_prepare($conn, $sql_start);
+                            mysqli_stmt_bind_param($stmt, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
+                            mysqli_stmt_execute($stmt);
+                            $res = mysqli_stmt_get_result($stmt);
+                            if ($row = mysqli_fetch_assoc($res)) {
+                                $peron_val = $row['peron'];
+                                $tor_val = $row['tor'];
+                            }
                         }
                     }
                 }

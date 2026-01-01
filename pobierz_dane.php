@@ -30,6 +30,9 @@ if (isset($_GET['id_przejazdu'])) {
     // 2. POBIERZ TRASĘ
     $sql_trasa = "
         SELECT 
+            s.id_stacji,     
+            s.typ_stacji_id,
+            s.czy_zapowiadac,
             sr.kolejnosc, s.nazwa_stacji, 
             sr.przyjazd, sr.odjazd, 
             sr.przyjazd_rzecz, sr.odjazd_rzecz, 

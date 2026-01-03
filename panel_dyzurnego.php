@@ -530,7 +530,7 @@ function diffMinutesPHP($plan, $rzecz) {
 
     // --- KLUCZOWA POPRAWKA LOGIKI JS ---
     // --- FUNKCJA OBLICZAJĄCA I WYŚWIETLAJĄCA TRASĘ (Z POPRAWKĄ NA IGNOROWANIE STARYCH DANYCH) ---
-    // --- FUNKCJA OBLICZAJĄCA I WYŚWIETLAJĄCA TRASĘ (Z LOGIKĄ FALI PRIORYTETOWEJ) ---
+    // --- POPRAWIONA FUNKCJA Z "PODTRZYMANIEM" PROGNOZY NA STACJI ---
     function pobierzDaneTrasy(idPrzejazdu) {
         fetch('pobierz_dane.php?id_przejazdu=' + idPrzejazdu + '&nocache=' + new Date().getTime())
             .then(res => res.json())
@@ -552,11 +552,7 @@ function diffMinutesPHP($plan, $rzecz) {
                 tbody.innerHTML = '';
                 
                 let biezaceOpoznienie = 0;
-                
-                // Zmienna sterująca trybem prognozowania.
-                // false = jesteśmy w strefie historii lub aktywnej edycji (ufamy bazie danych).
-                // true  = jesteśmy w przyszłości (ignorujemy bazę, wymuszamy prognozę z bieżącego opóźnienia).
-                let forceForecast = false;
+                let foundFirstUnapprovedRow = false; 
 
                 if (data.trasa) {
                     data.trasa.forEach((t, i) => {
@@ -567,108 +563,90 @@ function diffMinutesPHP($plan, $rzecz) {
                         let displayO = '';
 
                         let isApproved = (t.zatwierdzony == 1);
+                        
+                        // Zmienna przechowująca opóźnienie przyjazdu w TYM wierszu, 
+                        // żeby wiedzieć czy "podtrzymać" opóźnienie przy odjeździe.
+                        let currentArrivalDelay = 0;
 
-                        // === PRZYJAZD ===
+                        // Decyzja: Czy ufamy danym z bazy w tym wierszu?
+                        let trustDB = false;
                         if (isApproved) {
-                            // Stacja zatwierdzona: ZAWSZE ufamy bazie
-                            if(t.przyjazd_rzecz) {
-                                let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
-                                biezaceOpoznienie = diff;
-                                displayP = t.przyjazd_rzecz.substr(0,5);
-                                if(diff != 0) {
-                                    delayP = (diff > 0 ? '+' : '') + diff;
-                                    classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
-                                }
-                            }
+                            trustDB = true;
                         } else {
-                            // Stacja niezatwierdzona
-                            if (forceForecast) {
-                                // Jesteśmy już "za" pociągiem -> Wymuszamy prognozę (ignorujemy stare śmieci w bazie)
-                                displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
-                                styleP += ' forecast';
-                                if (biezaceOpoznienie != 0) {
-                                    delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                    classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                                }
+                            if (!foundFirstUnapprovedRow) {
+                                trustDB = true; // To jest stacja, na której stoi pociąg (Aktywna)
+                                foundFirstUnapprovedRow = true;
                             } else {
-                                // To jest PIERWSZA niezatwierdzona stacja (aktywna) -> Sprawdzamy czy ma dane
-                                if (t.przyjazd_rzecz) {
-                                    // Ma wpisane dane -> Ufamy im, aktualizujemy opóźnienie
-                                    let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
-                                    biezaceOpoznienie = diff;
-                                    displayP = t.przyjazd_rzecz.substr(0,5);
-                                    if(diff != 0) {
-                                        delayP = (diff > 0 ? '+' : '') + diff;
-                                        classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
-                                    }
-                                } else {
-                                    // Nie ma danych -> Zaczynamy prognozowanie od tego momentu
-                                    displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
-                                    styleP += ' forecast';
-                                    if (biezaceOpoznienie != 0) {
-                                        delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                        classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                                    }
-                                    // Skoro tutaj nie było danych przyjazdu, to od teraz wszystko w dół jest przyszłością
-                                    forceForecast = true; 
-                                }
+                                trustDB = false; // Przyszłość -> prognozujemy
                             }
                         }
 
-                        // === ODJAZD ===
-                        if (isApproved) {
-                            if(t.odjazd_rzecz) {
-                                let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
-                                biezaceOpoznienie = diff;
+                        // === PRZYJAZD ===
+                        if (trustDB && t.przyjazd_rzecz) {
+                            let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
+                            biezaceOpoznienie = diff;
+                            currentArrivalDelay = diff; // Zapamiętujemy opóźnienie przyjazdu
+                            
+                            displayP = t.przyjazd_rzecz.substr(0,5);
+                            if(diff != 0) {
+                                delayP = (diff > 0 ? '+' : '') + diff;
+                                classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
+                            }
+                        } else if (t.przyjazd) {
+                            displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
+                            styleP += ' forecast';
+                            if (biezaceOpoznienie != 0) {
+                                delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                            }
+                        }
+
+                        // === ODJAZD (TUTAJ JEST POPRAWKA DLA RURKI) ===
+                        if (trustDB && t.odjazd_rzecz) {
+                            let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
+                            
+                            // SPECJALNY WARUNEK:
+                            // Jeśli system pokazuje 0 opóźnienia na odjeździe, ALE przyjazd był opóźniony,
+                            // to znaczy, że pociąg stoi, a "odjazd_rzecz" to tylko domyślny plan.
+                            // Wtedy IGNORUJEMY to 0 i narzucamy opóźnienie z przyjazdu.
+                            if (diff === 0 && currentArrivalDelay !== 0) {
+                                // Podtrzymujemy opóźnienie
+                                biezaceOpoznienie = currentArrivalDelay;
+                                
+                                // Wyświetlamy jako prognozę (kursywa), bo pociąg jeszcze nie ruszył
+                                displayO = addMinutes(t.odjazd, currentArrivalDelay);
+                                styleO += ' forecast';
+                                
+                                delayO = (currentArrivalDelay > 0 ? '+' : '') + currentArrivalDelay;
+                                classDiffO = currentArrivalDelay > 0 ? 'delay-red' : 'delay-green';
+                                
+                            } else {
+                                // Normalna sytuacja (opóźnienie jest inne niż 0, albo przyjazd też był o czasie)
+                                biezaceOpoznienie = diff; 
                                 displayO = t.odjazd_rzecz.substr(0,5);
                                 if(diff != 0) {
                                     delayO = (diff > 0 ? '+' : '') + diff;
                                     classDiffO = diff > 0 ? 'delay-red' : 'delay-green';
                                 }
                             }
-                        } else {
-                            if (forceForecast) {
-                                // Tryb wymuszonej prognozy
-                                displayO = addMinutes(t.odjazd, biezaceOpoznienie);
-                                styleO += ' forecast';
-                                if (biezaceOpoznienie != 0) {
-                                    delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                    classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                                }
-                            } else {
-                                // Aktywna stacja (jeszcze nie weszliśmy w tryb forceForecast przed chwilą)
-                                if (t.odjazd_rzecz) {
-                                    let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
-                                    biezaceOpoznienie = diff;
-                                    displayO = t.odjazd_rzecz.substr(0,5);
-                                    if(diff != 0) {
-                                        delayO = (diff > 0 ? '+' : '') + diff;
-                                        classDiffO = diff > 0 ? 'delay-red' : 'delay-green';
-                                    }
-                                    // Skoro mamy odjazd z aktywnej stacji, to następna stacja na pewno jest przyszłością
-                                    forceForecast = true;
-                                } else {
-                                    displayO = addMinutes(t.odjazd, biezaceOpoznienie);
-                                    styleO += ' forecast';
-                                    if (biezaceOpoznienie != 0) {
-                                        delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                        classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                                    }
-                                    forceForecast = true;
-                                }
+                        } else if (t.odjazd) {
+                            displayO = addMinutes(t.odjazd, biezaceOpoznienie);
+                            styleO += ' forecast';
+                            if (biezaceOpoznienie != 0) {
+                                delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
                             }
                         }
 
-                        // === POSTOJE I WIDOK ===
+                        // === POSTOJE (bez zmian) ===
                         let postojZam = '';
                         if (t.przyjazd && t.odjazd) {
                             let t1 = t.przyjazd.split(':');
                             let t2 = t.odjazd.split(':');
-                            // Obliczamy w sekundach dla dokładności (np. 0.5 min)
                             let secPrzyj = parseInt(t1[0], 10)*3600 + parseInt(t1[1], 10)*60 + (t1[2] ? parseInt(t1[2], 10) : 0);
                             let secOdj = parseInt(t2[0], 10)*3600 + parseInt(t2[1], 10)*60 + (t2[2] ? parseInt(t2[2], 10) : 0);
                             let diffSec = secOdj - secPrzyj;
-                            if (diffSec < 0) diffSec += 86400; // Obsługa doby
+                            if (diffSec < 0) diffSec += 86400;
                             let diffMin = diffSec / 60;
                             if (diffMin > 0) postojZam = parseFloat(diffMin.toFixed(1));
                         }

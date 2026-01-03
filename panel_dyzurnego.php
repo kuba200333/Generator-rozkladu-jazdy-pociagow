@@ -303,7 +303,7 @@ function diffMinutesPHP($plan, $rzecz) {
                     <td class="bg-time t-cell" data-short="<?= $short_pp ?>" data-full="<?= $full_pp ?>"><?= $short_pp ?></td>
                     <td class="<?= $cls_arr ?>"><?= $diff_arr != 0 ? ($diff_arr > 0 ? '+'.$diff_arr : $diff_arr) : '' ?></td>
                     <td class="bg-blue t-cell <?= $style_rp ?>" data-short="<?= $val_rp ?>" data-full="<?= fmtFull($val_rp) ?>"><?= $val_rp ?></td>
-                    <td class="<?= $type_class ?>" style="color: black center>"><?= $p['rodzaj'] ?></td>
+                    <td class="<?= $type_class ?>" style="text-align: center; color: black center>"><?= $p['rodzaj'] ?></td>
                     <td class="bg-green center"><?= $nr_left ?></td>
                     <td><?= $stacja_z ?></td>
                     <td class="bg-green center"><?= $nr_right ?></td>
@@ -529,6 +529,8 @@ function diffMinutesPHP($plan, $rzecz) {
     }
 
     // --- KLUCZOWA POPRAWKA LOGIKI JS ---
+    // --- FUNKCJA OBLICZAJĄCA I WYŚWIETLAJĄCA TRASĘ (Z POPRAWKĄ NA IGNOROWANIE STARYCH DANYCH) ---
+    // --- FUNKCJA OBLICZAJĄCA I WYŚWIETLAJĄCA TRASĘ (Z LOGIKĄ FALI PRIORYTETOWEJ) ---
     function pobierzDaneTrasy(idPrzejazdu) {
         fetch('pobierz_dane.php?id_przejazdu=' + idPrzejazdu + '&nocache=' + new Date().getTime())
             .then(res => res.json())
@@ -549,83 +551,139 @@ function diffMinutesPHP($plan, $rzecz) {
                 const tbody = document.getElementById('trasa-body');
                 tbody.innerHTML = '';
                 
-                // Zmienna niosąca falę opóźnienia
-                let biezaceOpoznienie = 0; 
+                let biezaceOpoznienie = 0;
+                
+                // Zmienna sterująca trybem prognozowania.
+                // false = jesteśmy w strefie historii lub aktywnej edycji (ufamy bazie danych).
+                // true  = jesteśmy w przyszłości (ignorujemy bazę, wymuszamy prognozę z bieżącego opóźnienia).
+                let forceForecast = false;
 
                 if (data.trasa) {
                     data.trasa.forEach((t, i) => {
-                        let przyjazdDisplay = '';
-                        let przyjazdClass = 'bg-blue t-cell';
-                        let przyjazdDiffText = '';
-                        let przyjazdDiffClass = '';
-                        let odjazdDisplay = '';
-                        let odjazdClass = 'bg-blue t-cell';
-                        let odjazdDiffText = '';
-                        let odjazdDiffClass = '';
+                        let delayP = '', styleP = 'bg-blue t-cell', classDiffP = '';
+                        let delayO = '', styleO = 'bg-blue t-cell', classDiffO = '';
+                        
+                        let displayP = '';
+                        let displayO = '';
 
-                        // Obliczamy różnicę "bazodanową" (to co jest wpisane w bazie)
-                        let dbDiffP = t.przyjazd_rzecz ? diffMinutes(t.przyjazd, t.przyjazd_rzecz) : 0;
-                        let dbDiffO = t.odjazd_rzecz ? diffMinutes(t.odjazd, t.odjazd_rzecz) : 0;
+                        let isApproved = (t.zatwierdzony == 1);
 
-                        // --- PRZYJAZD ---
-                        // Jeśli w bazie jest różnica (ktoś wpisał opóźnienie) -> to jest nowa prawda
-                        if (dbDiffP !== 0) {
-                            biezaceOpoznienie = dbDiffP;
-                            przyjazdDisplay = t.przyjazd_rzecz.substr(0,5);
+                        // === PRZYJAZD ===
+                        if (isApproved) {
+                            // Stacja zatwierdzona: ZAWSZE ufamy bazie
+                            if(t.przyjazd_rzecz) {
+                                let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
+                                biezaceOpoznienie = diff;
+                                displayP = t.przyjazd_rzecz.substr(0,5);
+                                if(diff != 0) {
+                                    delayP = (diff > 0 ? '+' : '') + diff;
+                                    classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
+                                }
+                            }
                         } else {
-                            // Jeśli w bazie NIE ma różnicy, ale mamy falę opóźnienia -> używamy fali
-                            if (biezaceOpoznienie !== 0 && t.przyjazd) {
-                                przyjazdDisplay = addMinutes(t.przyjazd, biezaceOpoznienie);
-                                przyjazdClass += ' forecast';
+                            // Stacja niezatwierdzona
+                            if (forceForecast) {
+                                // Jesteśmy już "za" pociągiem -> Wymuszamy prognozę (ignorujemy stare śmieci w bazie)
+                                displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
+                                styleP += ' forecast';
+                                if (biezaceOpoznienie != 0) {
+                                    delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                    classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                                }
                             } else {
-                                // Brak fali, brak wpisu -> czas planowy
-                                przyjazdDisplay = t.przyjazd ? t.przyjazd.substr(0,5) : '';
+                                // To jest PIERWSZA niezatwierdzona stacja (aktywna) -> Sprawdzamy czy ma dane
+                                if (t.przyjazd_rzecz) {
+                                    // Ma wpisane dane -> Ufamy im, aktualizujemy opóźnienie
+                                    let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
+                                    biezaceOpoznienie = diff;
+                                    displayP = t.przyjazd_rzecz.substr(0,5);
+                                    if(diff != 0) {
+                                        delayP = (diff > 0 ? '+' : '') + diff;
+                                        classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
+                                    }
+                                } else {
+                                    // Nie ma danych -> Zaczynamy prognozowanie od tego momentu
+                                    displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
+                                    styleP += ' forecast';
+                                    if (biezaceOpoznienie != 0) {
+                                        delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                        classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                                    }
+                                    // Skoro tutaj nie było danych przyjazdu, to od teraz wszystko w dół jest przyszłością
+                                    forceForecast = true; 
+                                }
                             }
                         }
 
-                        if (biezaceOpoznienie !== 0 && t.przyjazd) {
-                            przyjazdDiffText = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                            przyjazdDiffClass = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                        }
-
-                        // --- ODJAZD ---
-                        // Jeśli w bazie jest różnica -> aktualizujemy falę
-                        if (dbDiffO !== 0) {
-                            biezaceOpoznienie = dbDiffO;
-                            odjazdDisplay = t.odjazd_rzecz.substr(0,5);
+                        // === ODJAZD ===
+                        if (isApproved) {
+                            if(t.odjazd_rzecz) {
+                                let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
+                                biezaceOpoznienie = diff;
+                                displayO = t.odjazd_rzecz.substr(0,5);
+                                if(diff != 0) {
+                                    delayO = (diff > 0 ? '+' : '') + diff;
+                                    classDiffO = diff > 0 ? 'delay-red' : 'delay-green';
+                                }
+                            }
                         } else {
-                            // Brak różnicy w bazie -> używamy fali
-                            if (biezaceOpoznienie !== 0 && t.odjazd) {
-                                odjazdDisplay = addMinutes(t.odjazd, biezaceOpoznienie);
-                                odjazdClass += ' forecast';
+                            if (forceForecast) {
+                                // Tryb wymuszonej prognozy
+                                displayO = addMinutes(t.odjazd, biezaceOpoznienie);
+                                styleO += ' forecast';
+                                if (biezaceOpoznienie != 0) {
+                                    delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                    classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                                }
                             } else {
-                                odjazdDisplay = t.odjazd ? t.odjazd.substr(0,5) : '';
+                                // Aktywna stacja (jeszcze nie weszliśmy w tryb forceForecast przed chwilą)
+                                if (t.odjazd_rzecz) {
+                                    let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
+                                    biezaceOpoznienie = diff;
+                                    displayO = t.odjazd_rzecz.substr(0,5);
+                                    if(diff != 0) {
+                                        delayO = (diff > 0 ? '+' : '') + diff;
+                                        classDiffO = diff > 0 ? 'delay-red' : 'delay-green';
+                                    }
+                                    // Skoro mamy odjazd z aktywnej stacji, to następna stacja na pewno jest przyszłością
+                                    forceForecast = true;
+                                } else {
+                                    displayO = addMinutes(t.odjazd, biezaceOpoznienie);
+                                    styleO += ' forecast';
+                                    if (biezaceOpoznienie != 0) {
+                                        delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
+                                        classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                                    }
+                                    forceForecast = true;
+                                }
                             }
                         }
 
-                        if (biezaceOpoznienie !== 0 && t.odjazd) {
-                            odjazdDiffText = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                            odjazdDiffClass = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                        }
-
-                        // Postoje (obliczenia)
+                        // === POSTOJE I WIDOK ===
                         let postojZam = '';
-                        if(t.przyjazd && t.odjazd) {
-                            let min = diffMinutes(t.przyjazd, t.odjazd);
-                            if(min > 0) postojZam = min;
+                        if (t.przyjazd && t.odjazd) {
+                            let t1 = t.przyjazd.split(':');
+                            let t2 = t.odjazd.split(':');
+                            // Obliczamy w sekundach dla dokładności (np. 0.5 min)
+                            let secPrzyj = parseInt(t1[0], 10)*3600 + parseInt(t1[1], 10)*60 + (t1[2] ? parseInt(t1[2], 10) : 0);
+                            let secOdj = parseInt(t2[0], 10)*3600 + parseInt(t2[1], 10)*60 + (t2[2] ? parseInt(t2[2], 10) : 0);
+                            let diffSec = secOdj - secPrzyj;
+                            if (diffSec < 0) diffSec += 86400; // Obsługa doby
+                            let diffMin = diffSec / 60;
+                            if (diffMin > 0) postojZam = parseFloat(diffMin.toFixed(1));
                         }
 
                         let postojObl = '';
-                        if (przyjazdDisplay && odjazdDisplay) {
-                             let min = diffMinutes(przyjazdDisplay, odjazdDisplay);
+                        if (displayP && displayO) {
+                             let min = diffMinutes(displayP, displayO);
                              if (min > 0) postojObl = min;
                         }
 
-                        let rowClass = (t.zatwierdzony == 1) ? 'row-approved' : '';
+                        let rowClass = isApproved ? 'row-approved' : '';
 
                         let row = `<tr class="${rowClass}">
-                            <td class="${przyjazdDiffClass}">${przyjazdDiffText}</td>
-                            <td class="center"><input type="checkbox" ${t.zatwierdzony == 1 ? 'checked' : ''} disabled></td>
+                            <td class="${classDiffP}">${delayP}</td>
+                            <td class="center"><input type="checkbox" ${isApproved ? 'checked' : ''} disabled></td>
                             <td class="center">${i+1}</td>
                             <td><b>${t.nazwa_stacji}</b></td>
                             <td class="bg-gray">${t.tor || ''}</td>
@@ -634,11 +692,11 @@ function diffMinutesPHP($plan, $rzecz) {
                             <td class="center">${postojObl}</td>
                             <td class="center">${t.uwagi_postoju || ''}</td>
                             <td class="bg-time t-cell">${t.przyjazd ? t.przyjazd.substr(0,5) : ''}</td>
-                            <td class="${przyjazdClass}">${przyjazdDisplay}</td>
+                            <td class="${styleP}">${displayP}</td>
                             <td class="bg-time t-cell">${t.odjazd ? t.odjazd.substr(0,5) : ''}</td>
-                            <td class="${odjazdClass}">${odjazdDisplay}</td>
-                            <td class="${odjazdDiffClass}">${odjazdDiffText}</td>
-                            <td class="center">${data.opis ? data.opis.rodzaj_skrot : ''}</td>
+                            <td class="${styleO}">${displayO}</td>
+                            <td class="${classDiffO}">${delayO}</td>
+                            <td class="center" style="text-align: center; color: black;">${data.opis ? data.opis.rodzaj_skrot : ''}</td>
                         </tr>`;
                         tbody.innerHTML += row;
                     });

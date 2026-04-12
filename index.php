@@ -146,7 +146,7 @@
             <ul class="menu-list">
                 <li><a href="panel_dyzurnego.php"><span class="icon">🖥️</span> Panel Dyżurnego (SWDR)</a></li>
                 <li><a href="generator_rozkladu.php"><span class="icon">⚙️</span> Generator Rozkładu</a></li>
-                <li><a href="zarzadzanie_trasa.php"><span class="icon">✏️</span> Edycja / Korekta Trasy</a></li>
+                <li><a href="zarzadzanie_trasa.php"><span class="icon">✏️</span> Zarządzanie pociągami</a></li>
                 <li><a href="zarzadzanie_peronami.php"><span class="icon">📍</span> Zarządzanie Peronami</a></li>
             </ul>
         </div>
@@ -154,6 +154,7 @@
         <div class="card">
             <h2>👀 Podgląd i Pasażer</h2>
             <ul class="menu-list">
+                <li><a href="panel_tablic.php"><span class="icon">🖥️</span> Monitoring Tablic (CSDIP)</a></li>
                 <li><a href="podglad_maszynisty.php"><span class="icon">📄</span> Podgląd Maszynisty (SKR)</a></li>
                 <li><a href="przegladarka_rozkladow.php"><span class="icon">📋</span> Plakaty Stacyjne</a></li>
                 <li><a href="wyswietlacz_led.php"><span class="icon">🟧</span> Wyświetlacz LED (Pociąg)</a></li>

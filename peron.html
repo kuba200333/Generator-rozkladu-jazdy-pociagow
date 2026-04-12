@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tablica Peronowa - Pełny Ekran</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f305c;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+
+        #content-loaded, #content-empty {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-half {
+            padding: 3% 4% 1% 4%;
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .row-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 2%;
+        }
+
+        .time-container {
+            flex: 0 0 auto;
+        }
+
+        .small-label {
+            font-size: 2.5vh;
+            color: #7b96b6; 
+            margin-bottom: 1vh;
+            display: block;
+        }
+
+        /* Układ układający godzinę i czerwony box opóźnienia obok siebie */
+        .time-row {
+            display: flex;
+            align-items: center;
+            gap: 1.5vw;
+        }
+
+        .time {
+            font-size: 16vh;
+            font-weight: bold;
+            line-height: 0.9;
+            letter-spacing: 2px;
+        }
+
+        /* Styl czerwonego boxa z opóźnieniem */
+        .delay-box {
+            background-color: #dc2626; 
+            color: white;
+            font-size: 10vh; /* Delikatnie powiększona czcionka (z 9 na 10) */
+            font-weight: bold;
+            /* Zmieniony padding: 2.5vh góra/dół (zamiast 1.5) oraz 3vh lewo/prawo */
+            padding: 2.5vh 3vh; 
+            line-height: 1;
+            display: none; 
+            align-items: center;
+            justify-content: center;
+            margin-top: 0; /* Usunięto ujemny margines, żeby ładnie środkowało się z godziną */
+        }
+
+        .train-info {
+            font-size: 4.5vh;
+            text-align: right;
+            color: #e2e8f0;
+            line-height: 1.2;
+            max-width: 55%;
+        }
+
+        .station-area {
+            margin-top: 2vh;
+        }
+
+        .station-name {
+            font-size: 13vh;
+            font-weight: bold;
+            line-height: 1.1;
+            word-wrap: break-word;
+        }
+
+        .bottom-half {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            padding: 2% 4% 4% 4%;
+            overflow: hidden;
+        }
+
+        /* Tryb TRASA */
+        .mode-via {
+            background-color: transparent;
+        }
+
+        .via-stations {
+            font-size: 4.5vh;
+            color: #cbd5e1;
+            line-height: 1.4;
+        }
+
+        /* Tryb KONIEC BIEGU */
+        .mode-end {
+            background-color: #b91c1c; 
+            justify-content: center;
+            align-items: center;
+            padding: 0;
+        }
+
+        .terminates-pl {
+            font-size: 10vh;
+            font-weight: bold;
+            margin-bottom: 1%;
+        }
+
+        .terminates-en {
+            font-size: 6vh;
+            color: #f1f5f9;
+        }
+
+        /* Brak pociągu */
+        .no-train {
+            justify-content: center;
+            align-items: center;
+            font-size: 6vh;
+            color: #475569;
+        }
+
+        /* Pasek ostrzegawczy na dole ekranu */
+        #yellow-banner {
+            display: none;
+            background-color: #facc15;
+            color: black;
+            font-size: 6vh;
+            font-weight: bold;
+            width: 100%;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            padding: 1.5vh 0;
+            z-index: 100;
+            border-top: 4px solid #000;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="content-loaded" style="display: none;">
+        <div class="top-half">
+            <div class="row-header">
+                <div class="time-container">
+                    <span class="small-label" id="topLabel">Godzina / Time</span>
+                    <div class="time-row">
+                        <div class="time" id="disp-time">--:--</div>
+                        <div id="disp-delay" class="delay-box"></div>
+                    </div>
+                </div>
+                <div class="train-info" id="disp-train">---<br>---</div>
+            </div>
+            
+            <div class="station-area">
+                <span class="small-label" id="middleLabel">Kierunek / Direction</span>
+                <div class="station-name" id="disp-station">---</div>
+            </div>
+        </div>
+
+        <div class="bottom-half" id="bottomHalf">
+            </div>
+    </div>
+
+    <div id="yellow-banner">
+        <div id="banner-text" style="text-align: center; width: 100%;"></div>
+    </div>
+
+    <div id="content-empty" class="no-train">
+        BRAK ZAPLANOWANYCH ODJAZDÓW
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const numerPeronu = urlParams.get('peron') || '1';
+        const numerToru = urlParams.get('tor') || '1';
+
+        function updateBoard() {
+            fetch(`pobierz_na_tablice.php?peron=${numerPeronu}&tor=${numerToru}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && !data.error) {
+                        document.getElementById('content-loaded').style.display = 'flex';
+                        document.getElementById('content-empty').style.display = 'none';
+
+                        const isTerminating = (data.status_dyzurnego === 'konczy' || data.is_last_station === true);
+
+                        // 1. LOGIKA CZASU
+                        let czas = "--:--";
+                        if (isTerminating && data.przyjazd) {
+                            czas = data.przyjazd.substr(0,5);
+                        } else if (!isTerminating && data.odjazd) {
+                            czas = data.odjazd.substr(0,5);
+                        } else if (data.przyjazd) {
+                            czas = data.przyjazd.substr(0,5);
+                        }
+                        document.getElementById('disp-time').innerText = czas;
+
+                        // 2. LOGIKA CZERWONEGO BOXA OPÓŹNIENIA
+                        const delayBox = document.getElementById('disp-delay');
+                        const opoznienie = parseInt(data.opoznienie_minuty) || 0;
+                        if (opoznienie > 0) {
+                            delayBox.style.display = 'flex';
+                            delayBox.innerText = `~${opoznienie}'`;
+                        } else {
+                            delayBox.style.display = 'none';
+                        }
+
+                        // 3. ŻÓŁTY PASEK AWARYJNY
+                        if (data.komunikat_tablica && data.komunikat_tablica.trim() !== '') {
+                            document.getElementById('yellow-banner').style.display = 'block';
+                            document.getElementById('banner-text').innerText = data.komunikat_tablica;
+                        } else {
+                            document.getElementById('yellow-banner').style.display = 'none';
+                        }
+
+                        // 4. PEŁNA NAZWA POCIĄGU
+                        let nazwa = (data.nazwa_pociagu && data.nazwa_pociagu !== 'null' && data.nazwa_pociagu.trim() !== '') 
+                                    ? ` "${data.nazwa_pociagu.toUpperCase()}"` 
+                                    : '';
+                        let rodzaj = data.rodzaj || 'Pociąg';
+                        
+                        document.getElementById('disp-train').innerHTML = `${rodzaj}${nazwa}<br>${data.numer_pociagu}`;
+
+                        // 5. OBSŁUGA DOLNEJ SEKCJI EKRANU (Trasa / Koniec biegu)
+                        const bottom = document.getElementById('bottomHalf');
+
+                        if (isTerminating) {
+                            document.getElementById('disp-station').innerText = data.stacja_pocz || '---';
+                            document.getElementById('topLabel').innerText = "Godzina przyjazdu / Time of arrival";
+                            document.getElementById('middleLabel').innerText = "Stacja początkowa / Starting station";
+
+                            bottom.className = "bottom-half mode-end";
+                            bottom.innerHTML = `
+                                <div class="terminates-pl">Pociąg kończy bieg</div>
+                                <div class="terminates-en">The train terminates here</div>
+                            `;
+                        } else {
+                            document.getElementById('disp-station').innerText = data.stacja_konc || '---';
+                            document.getElementById('topLabel').innerText = "Godzina odjazdu / Time of departure";
+                            document.getElementById('middleLabel').innerText = "Stacja docelowa / Destination";
+
+                            bottom.className = "bottom-half mode-via";
+                            bottom.innerHTML = `
+                                <span class="small-label">Stacje pośrednie / Via stations</span>
+                                <div class="via-stations">${data.stacje_posrednie || '---'}</div>
+                            `;
+                        }
+                    } else {
+                        // Gdy dyżurny wygasi tablicę, pokazuje się tło z napisem "Brak zaplanowanych odjazdów"
+                        document.getElementById('content-loaded').style.display = 'none';
+                        document.getElementById('content-empty').style.display = 'flex';
+                        document.getElementById('yellow-banner').style.display = 'none';
+                    }
+                })
+                .catch(err => console.error("Błąd pobierania danych:", err));
+        }
+
+        //setInterval(updateBoard, 3000);
+        updateBoard();
+    </script>
+</body>
+</html>

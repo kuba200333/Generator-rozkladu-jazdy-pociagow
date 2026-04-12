@@ -43,7 +43,7 @@ $wszystkie_stacje = mysqli_fetch_all($wszystkie_stacje_res, MYSQLI_ASSOC);
 <body>
     <a href="kreator_tras.php">Powrót do listy tras</a>
     <h1><?= $id_trasy ? 'Edycja Trasy' : 'Tworzenie Nowej Trasy' ?></h1>
-    
+    <a href="masowe_dodawanie.php">Masowe dodanie stacji do tras</a>
     <form action="zapisz_trase.php" method="POST" onsubmit="selectAllStations()">
         <input type="hidden" name="id_trasy" value="<?= $id_trasy ?>">
         

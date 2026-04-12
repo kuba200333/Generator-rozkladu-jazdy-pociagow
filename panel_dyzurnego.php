@@ -6,13 +6,12 @@ require 'db_config.php';
 date_default_timezone_set('Europe/Warsaw');
 
 // Pobieranie listy posterunków (stacji)
-$stacje_res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje WHERE typ_stacji_id IN (1,3) ORDER BY nazwa_stacji");
+$stacje_res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje WHERE typ_stacji_id IN (1,2,3,5) ORDER BY nazwa_stacji");
 $wybrana_stacja = $_GET['id_stacji'] ?? 29;
 
 $pociagi = [];
 if ($wybrana_stacja) {
     // Pobieramy dane. 
-    // Kluczowe: sortowanie po przyjeździe, żeby "fala" szła po kolei
     $sql = "
     SELECT 
         sr.id_szczegolu, sr.id_przejazdu, sr.przyjazd, sr.odjazd, 
@@ -30,7 +29,7 @@ if ($wybrana_stacja) {
          JOIN stacje s2 ON sr2.id_stacji = s2.id_stacji
          WHERE sr2.id_przejazdu = sr.id_przejazdu 
          AND CAST(sr2.kolejnosc AS SIGNED) < CAST(sr.kolejnosc AS SIGNED)
-         AND s2.typ_stacji_id IN (1, 3)
+         AND s2.typ_stacji_id IN (1, 3,5)
          ORDER BY CAST(sr2.kolejnosc AS SIGNED) DESC LIMIT 1) as stacja_prev,
 
         (SELECT s3.nazwa_stacji 
@@ -38,10 +37,9 @@ if ($wybrana_stacja) {
          JOIN stacje s3 ON sr3.id_stacji = s3.id_stacji
          WHERE sr3.id_przejazdu = sr.id_przejazdu 
          AND CAST(sr3.kolejnosc AS SIGNED) > CAST(sr.kolejnosc AS SIGNED)
-         AND s3.typ_stacji_id IN (1, 3)
+         AND s3.typ_stacji_id IN (1, 3,5)
          ORDER BY CAST(sr3.kolejnosc AS SIGNED) ASC LIMIT 1) as stacja_next,
 
-        -- Pobieramy opóźnienie z ostatniego punktu, gdzie RZECZYWISTY != PLANOWY
         (SELECT CASE 
             WHEN sr_hist.odjazd_rzecz IS NOT NULL AND sr_hist.odjazd_rzecz != sr_hist.odjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.odjazd, sr_hist.odjazd_rzecz)
             WHEN sr_hist.przyjazd_rzecz IS NOT NULL AND sr_hist.przyjazd_rzecz != sr_hist.przyjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.przyjazd, sr_hist.przyjazd_rzecz)
@@ -84,8 +82,8 @@ function addMinutesPHP($time, $minutes) {
 
 function diffMinutesPHP($plan, $rzecz) {
     if (!$plan || !$rzecz) return 0;
-    $t1 = strtotime($plan);
-    $t2 = strtotime($rzecz);
+    $t1 = strtotime(substr($plan, 0, 5));
+    $t2 = strtotime(substr($rzecz, 0, 5));
     $diff = round(($t2 - $t1) / 60);
     if ($diff < -720) $diff += 1440;
     if ($diff > 720) $diff -= 1440;
@@ -129,7 +127,6 @@ function diffMinutesPHP($plan, $rzecz) {
         .delay-green { background-color: #008000; color: white; text-align: center; font-weight: bold; }
         .forecast { font-style: italic; color: #555; font-weight: normal; }
         
-        /* Styl dla zatwierdzonych */
         tr.row-approved td { background-color: #ccffcc !important; }
         tr.row-approved td.bg-time { background-color: #ccffcc !important; }
         tr.row-approved td.bg-blue { background-color: #ccffcc !important; }
@@ -153,11 +150,11 @@ function diffMinutesPHP($plan, $rzecz) {
         .btn-swdr:hover { background: #d0d0d0; }
         
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.4); }
-        .modal-content { background-color: #f0f0f0; margin: 5% auto; border: 1px solid #000; width: 750px; box-shadow: 4px 4px 10px rgba(0,0,0,0.5); font-family: 'Tahoma', sans-serif; }
+        .modal-content { background-color: #f0f0f0; margin: 3% auto; border: 1px solid #000; width: 850px; box-shadow: 4px 4px 10px rgba(0,0,0,0.5); font-family: 'Tahoma', sans-serif; }
         .modal-header { background: linear-gradient(to right, #000080, #3a6ea5); color: white; padding: 4px 8px; font-weight: bold; display: flex; justify-content: space-between; font-size: 12px; }
         .modal-info-strip { background-color: #ffffe0; border-bottom: 1px solid #ccc; padding: 5px; text-align: center; color: #006400; font-weight: bold; }
-        .modal-body { padding: 15px; display: flex; gap: 15px; }
-        .modal-col { flex: 1; border: 1px solid #aaa; padding: 10px; background: #fff; }
+        .modal-body { padding: 15px; }
+        .modal-col { flex: 1; border: 1px solid #aaa; padding: 10px; background: #fff; margin-bottom: 10px;}
         .modal-col h4 { margin: 0 0 10px 0; color: #000080; border-bottom: 1px solid #eee; font-size: 11px; }
         .time-row { display: flex; align-items: center; margin-bottom: 10px; background:#f5f5f5; padding:5px; border:1px solid #ddd;}
         input[type="time"] { font-size: 14px; font-weight: bold; width: 90px; }
@@ -167,10 +164,10 @@ function diffMinutesPHP($plan, $rzecz) {
         .btn-time:hover { background: #e0e0ff; border-color: #000080; }
         .modal-footer { padding: 8px; background: #e0e0e0; border-top: 1px solid #999; text-align: right; }
 
-        .announce-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-        .announce-field label { display: block; font-size: 10px; font-weight: bold; color: #000080; }
-        .announce-field input, .announce-field select { width: 95%; font-size: 11px; padding: 2px; }
-        .announce-box { border:1px solid #aaa; padding:10px; background:#fff; font-family: monospace; font-size: 12px; min-height: 80px; white-space: pre-wrap; overflow-y:auto; color: #000; }
+        .announce-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ccc;}
+        .announce-field label { display: block; font-size: 10px; font-weight: bold; color: #000080; margin-bottom: 2px;}
+        .announce-field input, .announce-field select { width: 100%; box-sizing: border-box; font-size: 11px; padding: 3px; border: 1px solid #aaa;}
+        .announce-box { border:1px solid #aaa; padding:10px; background:#fff; font-family: monospace; font-size: 13px; min-height: 80px; white-space: pre-wrap; overflow-y:auto; color: #000; margin-top: 10px;}
     </style>
 </head>
 <body>
@@ -179,7 +176,7 @@ function diffMinutesPHP($plan, $rzecz) {
     <div class="control-group">
         <label>Posterunek:</label>
         <form method="GET" id="formStacja">
-            <select name="id_stacji" onchange="document.getElementById('formStacja').submit()">
+            <select name="id_stacji" id="selectStacja" onchange="document.getElementById('formStacja').submit()">
                 <?php 
                 mysqli_data_seek($stacje_res, 0);
                 while($s = mysqli_fetch_assoc($stacje_res)): ?>
@@ -247,12 +244,11 @@ function diffMinutesPHP($plan, $rzecz) {
                     $is_approved = ($p['zatwierdzony'] == 1); 
                     $row_class = $is_approved ? 'row-approved' : '';
 
-                    // PHP - Przyjazd
                     if ($p['przyjazd_rzecz'] && $p['przyjazd_rzecz'] != $p['przyjazd']) {
                         $val_rp = substr($p['przyjazd_rzecz'], 0, 5);
                         $style_rp = '';
                         $diff_arr = diffMinutesPHP($p['przyjazd'], $p['przyjazd_rzecz']);
-                        $opoz_min = $diff_arr; // Aktualizacja lokalna dla wyświetlania
+                        $opoz_min = $diff_arr; 
                     } else {
                         $val_rp = $p['przyjazd'] ? addMinutesPHP($p['przyjazd'], $opoz_min) : '';
                         $style_rp = 'forecast';
@@ -260,7 +256,6 @@ function diffMinutesPHP($plan, $rzecz) {
                     }
                     $cls_arr = ($diff_arr > 0) ? 'delay-red' : (($diff_arr < 0) ? 'delay-green' : '');
 
-                    // PHP - Odjazd
                     if ($p['odjazd_rzecz'] && $p['odjazd_rzecz'] != $p['odjazd']) {
                         $val_ro = substr($p['odjazd_rzecz'], 0, 5);
                         $style_ro = '';
@@ -303,7 +298,7 @@ function diffMinutesPHP($plan, $rzecz) {
                     <td class="bg-time t-cell" data-short="<?= $short_pp ?>" data-full="<?= $full_pp ?>"><?= $short_pp ?></td>
                     <td class="<?= $cls_arr ?>"><?= $diff_arr != 0 ? ($diff_arr > 0 ? '+'.$diff_arr : $diff_arr) : '' ?></td>
                     <td class="bg-blue t-cell <?= $style_rp ?>" data-short="<?= $val_rp ?>" data-full="<?= fmtFull($val_rp) ?>"><?= $val_rp ?></td>
-                    <td class="<?= $type_class ?>" style="text-align: center; color: black center>"><?= $p['rodzaj'] ?></td>
+                    <td class="<?= $type_class ?>" style="text-align: center; color: black;"><?= $p['rodzaj'] ?></td>
                     <td class="bg-green center"><?= $nr_left ?></td>
                     <td><?= $stacja_z ?></td>
                     <td class="bg-green center"><?= $nr_right ?></td>
@@ -316,7 +311,8 @@ function diffMinutesPHP($plan, $rzecz) {
                     <td class="bg-blue t-cell <?= $style_ro ?>" data-short="<?= $val_ro ?>" data-full="<?= fmtFull($val_ro) ?>"><?= $val_ro ?></td>
                     <td><?= $p['stacja_pocz'] ?></td>
                     <td><?= $p['stacja_konc'] ?></td>
-                    <td><?= $p['przewoznik_skrot'] ?></td> </tr>
+                    <td><?= $p['przewoznik_skrot'] ?></td> 
+                </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
@@ -325,14 +321,18 @@ function diffMinutesPHP($plan, $rzecz) {
     <div id="tab-opis" class="tab-pane" style="background:#f0f0f0;">
         <div class="info-grid">
             <div class="info-label">Numer pociągu</div><div class="info-value" id="op-nr"></div>
-            <div class="info-full-row"><div class="info-label">Informacje dodatkowe</div><div class="info-textarea"></div></div>
+            <div class="info-full-row"><div class="info-label" style="text-align:left;">Informacje dodatkowe</div><div class="info-textarea"></div></div>
             <div class="info-label">Nazwa pociągu</div><div class="info-value" id="op-nazwa"></div>
-            <div class="info-full-row"><div class="info-label">Ładunek</div><div class="info-textarea"></div></div>
+            <div class="info-full-row"><div class="info-label" style="text-align:left;">Ładunek</div><div class="info-textarea"></div></div>
             <div class="info-label">Rodzaj pociągu</div><div class="info-value" id="op-rodzaj"></div>
             <div class="info-label">Przewoźnik</div><div class="info-value" id="op-przew"></div>
             <div class="info-label">Stacja początkowa</div><div class="info-value" id="op-start"></div>
             <div class="info-label">Stacja końcowa</div><div class="info-value" id="op-koniec"></div>
-            <div class="info-full-row"><div class="info-label">Uwagi własne</div><div class="info-textarea" id="op-symbole"></div></div>
+            <div class="info-full-row"><div class="info-label" style="text-align:left;">Uwagi własne</div><div class="info-textarea" id="op-symbole"></div></div>
+            
+            <div class="info-full-row" style="margin-top: 10px; text-align: center;">
+                <button type="button" class="btn-swdr" onclick="drukujTablice()" style="padding: 8px 15px; font-size: 13px; display: inline-block; cursor: pointer; background: #e0f2fe; border-color: #0284c7;">🖨️ Wydrukuj tablicę dla tego pociągu</button>
+            </div>
         </div>
     </div>
 
@@ -353,7 +353,7 @@ function diffMinutesPHP($plan, $rzecz) {
                     <th style="width:70px">Przyjazd rzecz.</th>
                     <th style="width:70px">Odjazd plan.</th>
                     <th style="width:70px">Odjazd rzecz.</th>
-                    <th style="width:25px">+/-</th>
+                    <th style="width:35px">+/-</th>
                     <th style="width:50px">Rodzaj</th>
                 </tr>
             </thead>
@@ -365,16 +365,18 @@ function diffMinutesPHP($plan, $rzecz) {
 <div class="bottom-bar">
     <div class="btn-swdr" onclick="openModal()"><span>🕒</span> Wprowadzanie godzin (F2)</div>
     <div class="btn-swdr" onclick="openAnnounceModal()"><span>📢</span> Zapowiedź</div>
-    <span style="font-size:10px; color:#555;">Ilość pociągów -> <?= count($pociagi) ?></span>
+    <div class="btn-swdr" onclick="openWyswietlaczModal()" style="background: #e0f2fe; border-color: #0284c7;"><span>🖥️</span> Wyświetl na peronie</div>
+    <a href="panel_tablic.php?id_stacji=<?= $wybrana_stacja ?>" target="_blank" class="btn-swdr" style="margin-left:auto;"><span>👁️</span> Podgląd wszystkich tablic</a>
+    <span style="font-size:10px; color:#555; margin-left:10px;">Ilość pociągów -> <?= count($pociagi) ?></span>
 </div>
 
 <div id="modalGodziny" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" style="width: 500px;">
         <div class="modal-header"><span>Rzeczywisty czas przyjazdu i odjazdu pociągu</span><span onclick="closeModal()" style="cursor:pointer;">X</span></div>
         <div class="modal-info-strip" id="modal-title"></div>
         <form id="formTimes" onsubmit="saveTimes(event)">
             <input type="hidden" id="modal-id" name="id_szczegolu">
-            <div class="modal-body">
+            <div class="modal-body" style="display:flex; gap: 10px;">
                 <div class="modal-col">
                     <h4>Pociąg przyjechał:</h4>
                     <div class="time-row">Planowo: <b id="lbl-plan-p" style="margin-right:10px;"></b></div>
@@ -384,7 +386,7 @@ function diffMinutesPHP($plan, $rzecz) {
                 <div class="modal-col">
                     <h4>Pociąg odjechał:</h4>
                     <div class="time-row">Planowo: <b id="lbl-plan-o" style="margin-right:10px;"></b></div>
-                    <div class="time-control"><input type="date" value="<?= date('Y-m-d') ?>"><input type="time" name="odjazd_rzecz" id="inp-o"><button type="button" onclick="copyTime()" style="margin-left:5px; font-size:10px;">Przepisz czas przyjazdu</button></div>
+                    <div class="time-control"><input type="date" value="<?= date('Y-m-d') ?>"><input type="time" name="odjazd_rzecz" id="inp-o"><button type="button" onclick="copyTime()" style="margin-top:5px; font-size:10px; width:100%;">Przepisz czas przyjazdu</button></div>
                     <fieldset style="border:1px solid #ccc; padding:5px; margin-top:10px;"><legend style="font-size:10px; color:navy;">Dodaj opóźnienie</legend><div class="btn-grid"><?php foreach([5,10,15,20,25,30,45,60] as $m) echo "<div class='btn-time' onclick=\"addMin('inp-o', $m)\">$m min.</div>"; ?></div></fieldset>
                 </div>
             </div>
@@ -394,10 +396,10 @@ function diffMinutesPHP($plan, $rzecz) {
 </div>
 
 <div id="modalZapowiedz" class="modal">
-    <div class="modal-content" style="width: 800px;">
+    <div class="modal-content">
         <div class="modal-header">
-            <span>📢 Generator Zapowiedzi (Wg Wytycznych PLK)</span>
-            <span onclick="closeAnnounceModal()" style="cursor:pointer;">X</span>
+            <span>📢 Generator Zapowiedzi Megafonowych (PLK)</span>
+            <span onclick="closeAnnounceModal()" style="cursor:pointer; font-size:14px;">X</span>
         </div>
         <div class="modal-info-strip" id="zapowiedz-info"></div>
         
@@ -407,10 +409,12 @@ function diffMinutesPHP($plan, $rzecz) {
                     <label>Kategoria komunikatu:</label>
                     <select id="annCat" onchange="updateTemplates()">
                         <option value="wjazd">Wjazd / Przyjazd</option>
-                        <option value="odjazd">Odjazd / Postój</option>
+                        <option value="odjazd_postoj">Odjazd / Postój</option>
+                        <option value="rezerwacja">Rezerwacja miejsc / Wagony</option>
                         <option value="opoznienie">Opóźnienia</option>
-                        <option value="zaklocenia">Zakłócenia / Zmiany</option>
-                        <option value="bezpieczenstwo">Bezpieczeństwo / Inne</option>
+                        <option value="zaklocenia">Zakłócenia / Odwołania</option>
+                        <option value="komunikacja_zastepcza">Komunikacja Zastępcza (ZKA)</option>
+                        <option value="bezpieczenstwo_inne">Bezpieczeństwo / Inne</option>
                     </select>
                 </div>
                 <div class="announce-field">
@@ -419,36 +423,117 @@ function diffMinutesPHP($plan, $rzecz) {
                 </div>
                 
                 <div class="announce-field">
-                    <label>Peron:</label>
-                    <input type="text" id="annPeron" oninput="generateAnnouncement()">
+                    <label>Peron / Tor (wymusza odmianę):</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="annPeron" placeholder="Peron" oninput="generateAnnouncement()">
+                        <input type="text" id="annTor" placeholder="Tor" oninput="generateAnnouncement()">
+                    </div>
                 </div>
                 <div class="announce-field">
-                    <label>Tor:</label>
-                    <input type="text" id="annTor" oninput="generateAnnouncement()">
+                    <label>Godzina plan. / Opóźnienie (min):</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="time" id="annTime" oninput="generateAnnouncement()">
+                        <input type="number" id="annDelay" placeholder="Minuty opóźn." oninput="generateAnnouncement()">
+                    </div>
                 </div>
+
                 <div class="announce-field">
-                    <label>Opóźnienie (min):</label>
-                    <input type="number" id="annDelay" oninput="generateAnnouncement()">
+                    <label>Stacja skrócona / Stacja dla grupy wagonów:</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="annShort" oninput="generateAnnouncement()" placeholder="Skrócona (np. Stargard)">
+                        <input type="text" id="annGroupStation" oninput="generateAnnouncement()" placeholder="Grupa do (np. Kołobrzeg)">
+                    </div>
                 </div>
+                
                 <div class="announce-field">
-                    <label>Godzina (Plan/Rzecz):</label>
-                    <input type="time" id="annTime" oninput="generateAnnouncement()">
+                    <label>Zmiana kategorii (Gdzie / Na jaką):</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="annChangeCatStation" oninput="generateAnnouncement()" placeholder="Od stacji (np. Poznań Gł.)">
+                        <input type="text" id="annNewCat" oninput="generateAnnouncement()" placeholder="Nowa (np. InterCity)">
+                    </div>
                 </div>
+
                 <div class="announce-field">
-                    <label>Skrócona do stacji:</label>
-                    <input type="text" id="annShort" oninput="generateAnnouncement()" placeholder="np. Stargard">
+                    <label>Położenie wagonów (wielogrupowe/1 kl.):</label>
+                    <select id="annWagonsPos" onchange="generateAnnouncement()">
+                        <option value="na początku">Na początku</option>
+                        <option value="w środku">W środku</option>
+                        <option value="na końcu">Na końcu</option>
+                    </select>
+                </div>
+                
+                <div class="announce-field">
+                    <label>Numery wagonów (Rezerwacja / Braki):</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="annWagonsFront" oninput="generateAnnouncement()" placeholder="Nr początek">
+                        <input type="text" id="annWagonsMiddle" oninput="generateAnnouncement()" placeholder="Nr środek">
+                        <input type="text" id="annWagonsRear" oninput="generateAnnouncement()" placeholder="Nr koniec">
+                    </div>
+                </div>
+
+                <div class="announce-field">
+                    <label>Wagon Kierownika / Brakujący / Zastępczy:</label>
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="annManagerWagon" oninput="generateAnnouncement()" placeholder="Kierownik nr">
+                        <input type="text" id="annMissingWagon" oninput="generateAnnouncement()" placeholder="Brakujący nr">
+                        <input type="text" id="annReplacementWagon" oninput="generateAnnouncement()" placeholder="Zastępczy nr">
+                    </div>
+                </div>
+
+            <div class="announce-field">
+                <label>Odcinek ZKA (Z jakiej stacji / Do jakiej stacji):</label>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="annZkaZ" oninput="generateAnnouncement()" placeholder="Od stacji (np. Goleniów)">
+                    <input type="text" id="annZkaDo" oninput="generateAnnouncement()" placeholder="Do stacji (np. Wysoka Kamieńska)">
+                </div>
+            </div>
+
+                <div class="announce-field">
+                    <label>Miejsce odjazdu ZKA:</label>
+                    <input type="text" id="annBusStop" oninput="generateAnnouncement()" placeholder="np. placu przed dworcem">
                 </div>
             </div>
             
-            <div class="announce-field">
-                <label>Treść zapowiedzi:</label>
+            <div class="announce-field" style="margin-top: 10px;">
+                <label>Wygenerowana treść zapowiedzi:</label>
                 <div class="announce-box" id="announceText"></div>
             </div>
         </div>
         
         <div class="modal-footer">
+            <button type="button" class="btn-swdr" id="btnPlay" onclick="playAnnouncement()">Wygłoś 🔊</button>
             <button type="button" class="btn-swdr" onclick="copyAnnouncement()">Kopiuj tekst</button>
             <button type="button" class="btn-swdr" onclick="closeAnnounceModal()">Zamknij</button>
+        </div>
+    </div>
+</div>
+
+<div id="modalWyswietlacz" class="modal">
+    <div class="modal-content" style="width: 450px;">
+        <div class="modal-header">
+            <span>🖥️ Zarządzanie Tablicą dla Pociągu</span>
+            <span onclick="closeWyswietlaczModal()" style="cursor:pointer; font-size:14px;">X</span>
+        </div>
+        <div class="modal-info-strip" id="wyswietlacz-info"></div>
+        
+        <div class="modal-body">
+            <div class="announce-field">
+                <label>Domyślny Peron (możesz zmienić):</label>
+                <input type="text" id="wysw-peron" style="font-size: 14px; font-weight: bold;">
+            </div>
+            <div class="announce-field" style="margin-top: 10px;">
+                <label>Domyślny Tor (możesz zmienić):</label>
+                <input type="text" id="wysw-tor" style="font-size: 14px; font-weight: bold;">
+            </div>
+            <div class="announce-field" style="margin-top: 15px;">
+                <label>Żółty pasek (komunikat awaryjny - opcjonalnie):</label>
+                <input type="text" id="wysw-komunikat" placeholder="np. Zmiana peronu, opóźniony...">
+            </div>
+        </div>
+        
+        <div class="modal-footer">
+            <button type="button" class="btn-swdr" onclick="zapiszWyswietlacz()" style="background-color: #dcfce7; font-size: 12px; padding: 5px 15px;">Wyślij na tablicę</button>
+            <button type="button" class="btn-swdr" onclick="closeWyswietlaczModal()">Anuluj</button>
         </div>
     </div>
 </div>
@@ -462,7 +547,9 @@ function diffMinutesPHP($plan, $rzecz) {
     const stacjaId = new URLSearchParams(window.location.search).get('id_stacji') || 29;
 
     setInterval(function() {
-        if (currentPrzejazdId) pobierzDaneTrasy(currentPrzejazdId);
+        if (currentPrzejazdId && document.getElementById('modalGodziny').style.display !== 'block' && document.getElementById('modalZapowiedz').style.display !== 'block') {
+            pobierzDaneTrasy(currentPrzejazdId);
+        }
     }, 5000); 
 
     function addMinutes(timeStr, mins) {
@@ -476,6 +563,7 @@ function diffMinutesPHP($plan, $rzecz) {
 
     function diffMinutes(plan, rzecz) {
         if (!plan || !rzecz) return 0;
+        // Bierzemy tylko pełne godziny i minuty z pominięciem sekund
         let [hp, mp] = plan.substr(0,5).split(':').map(Number);
         let [hr, mr] = rzecz.substr(0,5).split(':').map(Number);
         let minPlan = hp * 60 + mp;
@@ -522,16 +610,13 @@ function diffMinutesPHP($plan, $rzecz) {
             opoznienie: tr.getAttribute('data-opoznienie')
         };
 
-        document.getElementById('lbl-z').innerText = tr.dataset.z;
-        document.getElementById('lbl-do').innerText = tr.dataset.do;
+        document.getElementById('lbl-z').innerText = tr.dataset.z || '---';
+        document.getElementById('lbl-do').innerText = tr.dataset.do || '---';
 
         pobierzDaneTrasy(idPrzejazdu);
     }
 
-    // --- KLUCZOWA POPRAWKA LOGIKI JS ---
-    // --- FUNKCJA OBLICZAJĄCA I WYŚWIETLAJĄCA TRASĘ (Z POPRAWKĄ NA IGNOROWANIE STARYCH DANYCH) ---
-    // --- POPRAWIONA FUNKCJA Z "PODTRZYMANIEM" PROGNOZY NA STACJI ---
-    function pobierzDaneTrasy(idPrzejazdu) {
+   function pobierzDaneTrasy(idPrzejazdu) {
         fetch('pobierz_dane.php?id_przejazdu=' + idPrzejazdu + '&nocache=' + new Date().getTime())
             .then(res => res.json())
             .then(data => {
@@ -550,118 +635,109 @@ function diffMinutesPHP($plan, $rzecz) {
 
                 const tbody = document.getElementById('trasa-body');
                 tbody.innerHTML = '';
-                
-                let biezaceOpoznienie = 0;
-                let foundFirstUnapprovedRow = false; 
+
+                let biezaceOpoznienie = 0; 
 
                 if (data.trasa) {
                     data.trasa.forEach((t, i) => {
                         let delayP = '', styleP = 'bg-blue t-cell', classDiffP = '';
                         let delayO = '', styleO = 'bg-blue t-cell', classDiffO = '';
-                        
                         let displayP = '';
                         let displayO = '';
 
+                        // Kluczowa zmiana: ufamy TYLKO stacjom, które dyżurny fizycznie zatwierdził ptaszkiem ("Z")
                         let isApproved = (t.zatwierdzony == 1);
-                        
-                        // Zmienna przechowująca opóźnienie przyjazdu w TYM wierszu, 
-                        // żeby wiedzieć czy "podtrzymać" opóźnienie przy odjeździe.
-                        let currentArrivalDelay = 0;
 
-                        // Decyzja: Czy ufamy danym z bazy w tym wierszu?
-                        let trustDB = false;
+                        const calcDiff = (plan, rzecz) => {
+                            if(!plan || !rzecz) return 0;
+                            // Wycinamy tylko godziny i minuty, absolutnie ignorujemy sekundy!
+                            let t1 = plan.split(':');
+                            let t2 = rzecz.split(':');
+                            let s1 = (parseInt(t1[0],10)||0)*60 + (parseInt(t1[1],10)||0);
+                            let s2 = (parseInt(t2[0],10)||0)*60 + (parseInt(t2[1],10)||0);
+                            let d = s2 - s1;
+                            if(d < -720) d += 1440; if(d > 720) d -= 1440;
+                            return d; // Wynik od razu w pełnych minutach
+                        };
+
+                        // --- LOGIKA PRZYJAZDU ---
                         if (isApproved) {
-                            trustDB = true;
+                            // Pociąg był tu fizycznie - bierzemy czas z bazy (tylko to nadaje ton opóźnieniu!)
+                            if (t.przyjazd_rzecz && t.przyjazd_rzecz.length >= 5) {
+                                displayP = t.przyjazd_rzecz.substr(0,5);
+                                if (t.przyjazd) biezaceOpoznienie = calcDiff(t.przyjazd, t.przyjazd_rzecz);
+                            } else if (t.przyjazd) {
+                                displayP = t.przyjazd.substr(0,5);
+                            }
                         } else {
-                            if (!foundFirstUnapprovedRow) {
-                                trustDB = true; // To jest stacja, na której stoi pociąg (Aktywna)
-                                foundFirstUnapprovedRow = true;
-                            } else {
-                                trustDB = false; // Przyszłość -> prognozujemy
+                            // Przyszłość - CAŁKOWICIE IGNORUJEMY BAZĘ. 
+                            // Na sztywno dodajemy wyliczone opóźnienie z poprzedniej stacji do czasu planowego.
+                            if (t.przyjazd) {
+                                displayP = addMinutes(t.przyjazd, Math.round(biezaceOpoznienie));
+                                styleP += ' forecast';
                             }
                         }
 
-                        // === PRZYJAZD ===
-                        if (trustDB && t.przyjazd_rzecz) {
-                            let diff = diffMinutes(t.przyjazd, t.przyjazd_rzecz);
-                            biezaceOpoznienie = diff;
-                            currentArrivalDelay = diff; // Zapamiętujemy opóźnienie przyjazdu
-                            
-                            displayP = t.przyjazd_rzecz.substr(0,5);
-                            if(diff != 0) {
-                                delayP = (diff > 0 ? '+' : '') + diff;
-                                classDiffP = diff > 0 ? 'delay-red' : 'delay-green';
-                            }
-                        } else if (t.przyjazd) {
-                            displayP = addMinutes(t.przyjazd, biezaceOpoznienie);
-                            styleP += ' forecast';
-                            if (biezaceOpoznienie != 0) {
-                                delayP = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                classDiffP = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
-                            }
+                        // Obliczenie etykiety opóźnienia przyjazdu (+/-) do wyświetlenia
+                        let finalDiffP = 0;
+                        if (displayP && t.przyjazd) finalDiffP = calcDiff(t.przyjazd, displayP + ":00");
+                        if (Math.round(finalDiffP) != 0) {
+                            delayP = (finalDiffP > 0 ? '+' : '') + Math.round(finalDiffP);
+                            classDiffP = finalDiffP > 0 ? 'delay-red' : 'delay-green';
                         }
 
-                        // === ODJAZD (TUTAJ JEST POPRAWKA DLA RURKI) ===
-                        if (trustDB && t.odjazd_rzecz) {
-                            let diff = diffMinutes(t.odjazd, t.odjazd_rzecz);
-                            
-                            // SPECJALNY WARUNEK:
-                            // Jeśli system pokazuje 0 opóźnienia na odjeździe, ALE przyjazd był opóźniony,
-                            // to znaczy, że pociąg stoi, a "odjazd_rzecz" to tylko domyślny plan.
-                            // Wtedy IGNORUJEMY to 0 i narzucamy opóźnienie z przyjazdu.
-                            if (diff === 0 && currentArrivalDelay !== 0) {
-                                // Podtrzymujemy opóźnienie
-                                biezaceOpoznienie = currentArrivalDelay;
-                                
-                                // Wyświetlamy jako prognozę (kursywa), bo pociąg jeszcze nie ruszył
-                                displayO = addMinutes(t.odjazd, currentArrivalDelay);
-                                styleO += ' forecast';
-                                
-                                delayO = (currentArrivalDelay > 0 ? '+' : '') + currentArrivalDelay;
-                                classDiffO = currentArrivalDelay > 0 ? 'delay-red' : 'delay-green';
-                                
-                            } else {
-                                // Normalna sytuacja (opóźnienie jest inne niż 0, albo przyjazd też był o czasie)
-                                biezaceOpoznienie = diff; 
+                        // --- LOGIKA ODJAZDU ---
+                        if (isApproved) {
+                            // Pociąg odjechał stąd fizycznie
+                            if (t.odjazd_rzecz && t.odjazd_rzecz.length >= 5) {
                                 displayO = t.odjazd_rzecz.substr(0,5);
-                                if(diff != 0) {
-                                    delayO = (diff > 0 ? '+' : '') + diff;
-                                    classDiffO = diff > 0 ? 'delay-red' : 'delay-green';
-                                }
+                                if (t.odjazd) biezaceOpoznienie = calcDiff(t.odjazd, t.odjazd_rzecz); 
+                            } else if (t.odjazd) {
+                                displayO = t.odjazd.substr(0,5);
                             }
-                        } else if (t.odjazd) {
-                            displayO = addMinutes(t.odjazd, biezaceOpoznienie);
-                            styleO += ' forecast';
-                            if (biezaceOpoznienie != 0) {
-                                delayO = (biezaceOpoznienie > 0 ? '+' : '') + biezaceOpoznienie;
-                                classDiffO = biezaceOpoznienie > 0 ? 'delay-red' : 'delay-green';
+                        } else {
+                            // Przyszłość - dodajemy na sztywno opóźnienie do planu
+                            if (t.odjazd) {
+                                displayO = addMinutes(t.odjazd, Math.round(biezaceOpoznienie));
+                                styleO += ' forecast';
                             }
                         }
 
-                        // === POSTOJE (bez zmian) ===
+                        // Obliczenie etykiety opóźnienia odjazdu (+/-)
+                        let finalDiffO = 0;
+                        if (displayO && t.odjazd) finalDiffO = calcDiff(t.odjazd, displayO + ":00");
+                        if (Math.round(finalDiffO) != 0) {
+                            delayO = (finalDiffO > 0 ? '+' : '') + Math.round(finalDiffO);
+                            classDiffO = finalDiffO > 0 ? 'delay-red' : 'delay-green';
+                        }
+
+                        // Czas postoju (Zamierzony / Obliczony)
                         let postojZam = '';
                         if (t.przyjazd && t.odjazd) {
-                            let t1 = t.przyjazd.split(':');
-                            let t2 = t.odjazd.split(':');
-                            let secPrzyj = parseInt(t1[0], 10)*3600 + parseInt(t1[1], 10)*60 + (t1[2] ? parseInt(t1[2], 10) : 0);
-                            let secOdj = parseInt(t2[0], 10)*3600 + parseInt(t2[1], 10)*60 + (t2[2] ? parseInt(t2[2], 10) : 0);
-                            let diffSec = secOdj - secPrzyj;
-                            if (diffSec < 0) diffSec += 86400;
-                            let diffMin = diffSec / 60;
-                            if (diffMin > 0) postojZam = parseFloat(diffMin.toFixed(1));
+                            let p = calcDiff(t.przyjazd, t.odjazd);
+                            if (p > 0) postojZam = parseFloat(p.toFixed(1)); 
                         }
-
                         let postojObl = '';
                         if (displayP && displayO) {
-                             let min = diffMinutes(displayP, displayO);
-                             if (min > 0) postojObl = min;
+                             let p = calcDiff(displayP + ':00', displayO + ':00');
+                             if (p > 0) postojObl = parseFloat(p.toFixed(1));
                         }
 
                         let rowClass = isApproved ? 'row-approved' : '';
-
-                        let row = `<tr class="${rowClass}">
+                        
+                        let row = `<tr class="${rowClass}" onclick="selectRow(this, ${t.id_szczegolu}, ${idPrzejazdu})" 
+                                    ondblclick="openModal()"
+                                    data-info="${t.numer_pociagu}" 
+                                    data-plan-p="${t.przyjazd ? t.przyjazd.substr(0,5) : ''}" 
+                                    data-plan-o="${t.odjazd ? t.odjazd.substr(0,5) : ''}"
+                                    data-rzecz-p="${displayP}" 
+                                    data-rzecz-o="${displayO}"
+                                    data-z="${data.opis.stacja_pocz}" data-do="${data.opis.stacja_konc}"
+                                    data-rodzaj="${t.rodzaj}"
+                                    data-opoznienie="${Math.round(biezaceOpoznienie)}">
+                                    
                             <td class="${classDiffP}">${delayP}</td>
-                            <td class="center"><input type="checkbox" ${isApproved ? 'checked' : ''} disabled></td>
+                            <td class="center"><input type="checkbox" ${t.zatwierdzony == 1 ? 'checked' : ''} disabled></td>
                             <td class="center">${i+1}</td>
                             <td><b>${t.nazwa_stacji}</b></td>
                             <td class="bg-gray">${t.tor || ''}</td>
@@ -674,7 +750,7 @@ function diffMinutesPHP($plan, $rzecz) {
                             <td class="bg-time t-cell">${t.odjazd ? t.odjazd.substr(0,5) : ''}</td>
                             <td class="${styleO}">${displayO}</td>
                             <td class="${classDiffO}">${delayO}</td>
-                            <td class="center" style="text-align: center; color: black;">${data.opis ? data.opis.rodzaj_skrot : ''}</td>
+                            <td class="center">${data.opis ? data.opis.rodzaj_skrot : ''}</td>
                         </tr>`;
                         tbody.innerHTML += row;
                     });
@@ -707,15 +783,44 @@ function diffMinutesPHP($plan, $rzecz) {
     function saveTimes(e) {
         e.preventDefault();
         const fd = new FormData(document.getElementById('formTimes'));
-        fetch('zapisz_czas.php', { method:'POST', body:fd }).then(r=>r.text()).then(res=>{
-            if(res==='OK') { 
+        
+        fetch('zapisz_czas.php', { method:'POST', body:fd })
+        .then(r => r.text())
+        .then(res => {
+            if (res === 'OK') { 
                 closeModal(); 
-                if(currentPrzejazdId) pobierzDaneTrasy(currentPrzejazdId);
-            } else { alert(res); }
+                
+                // 1. Odświeżamy dolną tabelę "Trasa pociągu"
+                if (currentPrzejazdId) pobierzDaneTrasy(currentPrzejazdId);
+
+                // 2. MAGIA: Odświeżamy główny "Wykaz pociągów" w tle bez przeładowywania strony!
+                fetch(window.location.href)
+                .then(response => response.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    // Podmieniamy samą zawartość głównej tabeli na nową, prosto z bazy
+                    document.querySelector('#tab-wykaz').innerHTML = doc.querySelector('#tab-wykaz').innerHTML;
+                    
+                    // Przywracamy granatowe podświetlenie wybranego pociągu, żeby nie zniknęło
+                    if (currentId) {
+                        const zaznaczonyWiersz = document.querySelector(`tr[onclick*="selectRow(this, ${currentId}"]`);
+                        if (zaznaczonyWiersz) {
+                            zaznaczonyWiersz.classList.add('selected');
+                        }
+                    }
+                });
+                
+            } else { 
+                alert(res); 
+            }
         });
     }
 
     document.addEventListener('keydown', e => { if(e.key === 'F2') openModal(); });
+
+    // --- SYSTEM ZAPOWIEDZI MEGAFONOWYCH ---
 
     const trainTypes = {
         'IC': 'InterCity', 'TLK': 'Twoje Linie Kolejowe', 'EIP': 'Express InterCity Premium', 
@@ -726,150 +831,624 @@ function diffMinutesPHP($plan, $rzecz) {
 
     const TEMPLATES = {
         'wjazd': {
-            'std': 'Pociąg {rodzaj} {nazwa} ze stacji {z} do stacji {do} przez stacje {posrednie}, wjedzie na tor {tor} przy peronie {peron}. Prosimy zachować ostrożność i nie zbliżać się do krawędzi peronu.',
-            'przelot': 'Uwaga! Po torze {tor} przy peronie {peron} przejedzie pociąg {rodzaj} {nazwa} bez zatrzymania. Prosimy zachować ostrożność.',
-            'konczy': 'Pociąg {rodzaj} {nazwa} ze stacji {z} wjedzie na tor {tor} przy peronie {peron}. Pociąg kończy bieg. Prosimy zachować ostrożność.',
-            'zmiana_peronu': 'Uwaga! Zmiana peronu. Pociąg {rodzaj} {nazwa} ze stacji {z} do stacji {do} wjedzie wyjątkowo na tor {tor} przy peronie {peron}. Za zmianę peronu przepraszamy.'
+            'poczatkowa_std': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu. Planowy odjazd pociągu, o godzinie {czas}.',
+            'posrednia_std': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu.',
+            'posrednia_1peron_1tor': 'Uwaga! Wjedzie pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu.',
+            'konczy': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, wjedzie na tor {tor}, przy peronie {peron}. Pociąg kończy bieg. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu.',
+            'wielogrupowy': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, i {do_grupy}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Wagony do stacji {do}, znajdują się {gdzie_wagony}, wagony do stacji {do_grupy}, znajdują się {gdzie_wagony_grupa}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu.',
+            'przyspieszony': 'Przyśpieszony pociąg osobowy {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Pociąg zatrzymuje się, na niektórych stacjach. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu.',
+            'zmiana_peronu': 'Uwaga! Zmiana peronu. Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, wjedzie wyjątkowo na tor {tor}, przy peronie {peron}. Osoby oczekujące na ten pociąg, proszone są o przejście na peron {peron}. Za zmianę peronu, przepraszamy.',
+            'przelot': 'Uwaga! Po torze {tor}, przy peronie {peron}, przejedzie pociąg {rodzaj} {nazwa}, bez zatrzymania. Prosimy zachować ostrożność, i odsunąć się od krawędzi peronu.',
+            'zmiana_kategorii': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Od stacji {stacja_zmiany_kat}, pociąg zmienia kategorię na {nowa_kategoria}. Planowy odjazd pociągu, o godzinie {czas}.'
         },
-        'odjazd': {
-            'std': 'Pociąg {rodzaj} {nazwa} do stacji {do} przez stacje {posrednie}, odjedzie z toru {tor} przy peronie {peron}. Życzymy Państwu przyjemnej podróży.',
-            'stoi': 'Pociąg {rodzaj} {nazwa} do stacji {do} stoi na torze {tor} przy peronie {peron}. Planowy odjazd pociągu o godzinie {czas}.',
-            'opozniony_odjazd': 'Pociąg {rodzaj} {nazwa} do stacji {do} odjedzie z toru {tor} przy peronie {peron} z opóźnieniem około {opoznienie} minut. Za opóźnienie przepraszamy.'
+        'odjazd_postoj': {
+            'odjazd_std': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, przez stacje, {posrednie}, odjedzie z toru {tor}, przy peronie {peron}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu. Życzymy Państwu, przyjemnej podróży.',
+            'stoi_std': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, przez stacje, {posrednie}, stoi na torze {tor}, przy peronie {peron}. Planowy odjazd pociągu, o godzinie {czas}.',
+            'wielogrupowy_odjazd': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, i {do_grupy}, przez stacje, {posrednie}, odjedzie z toru {tor}, przy peronie {peron}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu. Życzymy Państwu, przyjemnej podróży.',
+            'wielogrupowy_stoi': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, i {do_grupy}, przez stacje, {posrednie}, stoi na torze {tor}, przy peronie {peron}. Wagony do stacji {do}, znajdują się {gdzie_wagony}, wagony do stacji {do_grupy}, znajdują się {gdzie_wagony_grupa}. Planowy odjazd pociągu, o godzinie {czas}.',
+            'dolaczanie_wagonow': 'Uwaga! Do pociągu {rodzaj} {nazwa}, stojącego na torze {tor}, przy peronie {peron}, zostaną dołączone wagony, do stacji {do_grupy}. Wagony będą dołączone {poczatek_koniec} składu pociągu. Prosimy zachować ostrożność.'
+        },
+        'rezerwacja': {
+            'wjazd_cala': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Pociąg jest objęty obowiązkową rezerwacją miejsc. Wagony numer {wagony_poczatek}, znajdują się na początku składu pociągu, wagony numer {wagony_srodek}, znajdują się w środku składu pociągu, wagony numer {wagony_koniec}, znajdują się na końcu składu pociągu. Przesyłki konduktorskie, przyjmuje i wydaje kierownik pociągu, w wagonie numer {wagon_kier}. Prosimy zachować ostrożność i nie zbliżać się do krawędzi peronu.',
+            'wjazd_klasa1': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, wjedzie na tor {tor}, przy peronie {peron}. Wagony klasy pierwszej, objęte są obowiązkową rezerwacją miejsc, i znajdują się na {poczatek_koniec} składu pociągu. Przesyłki konduktorskie, przyjmuje kierownik pociągu, w wagonie numer {wagon_kier}. Prosimy zachować ostrożność i nie zbliżać się do krawędzi peronu.',
+            'wagony_poza_peronem': 'Uwaga! Ze względu na długość składu, wagony z numerami {wagony_poza}, zatrzymają się poza peronem. Podróżnych posiadających miejsca w tych wagonach, prosimy o wsiadanie do pociągu poprzez wagony stojące przy peronie, i przejście przez skład na swoje miejsce.'
         },
         'opoznienie': {
-            'wjazd': 'Pociąg {rodzaj} {nazwa} ze stacji {z} do stacji {do}, planowy przyjazd godzina {czas}, przyjedzie z opóźnieniem około {opoznienie} minut. Opóźnienie może ulec zmianie.',
-            'odjazd': 'Pociąg {rodzaj} {nazwa} do stacji {do}, planowy odjazd godzina {czas}, odjedzie z opóźnieniem około {opoznienie} minut. Za opóźnienie przepraszamy.',
-            'techniczne': 'Z przyczyn technicznych pociąg {rodzaj} {nazwa} do stacji {do} odjedzie z opóźnieniem około {opoznienie} minut.',
-            'skomunikowanie': 'Pociąg {rodzaj} {nazwa} do stacji {do} odjedzie z opóźnieniem około {opoznienie} minut z powodu oczekiwania na pociąg skomunikowany.'
+            'podstawienie': 'Pociąg {rodzaj} {nazwa}, do stacji {do}, odjeżdżający o godzinie {czas}, z przyczyn technicznych, zostanie podstawiony z opóźnieniem około {opoznienie} minut. O wjeździe pociągu, zostaną Państwo powiadomieni oddzielnym komunikatem. Za opóźnienie pociągu, przepraszamy.',
+            'w_trasie_wjazd': 'Uwaga! Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, planowy przyjazd o godzinie {czas}, przyjedzie z opóźnieniem około {opoznienie} minut. Opóźnienie, może ulec zmianie. Prosimy o zwracanie uwagi na komunikaty. Za opóźnienie pociągu, przepraszamy.',
+            'wypadek': 'Informujemy, że pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, planowy przyjazd o godzinie {czas}, przyjedzie z opóźnieniem około {opoznienie} minut. Przyczyną opóźnienia, jest zdarzenie na torach. Opóźnienie pociągu, może ulec zmianie.',
+            'pogoda': 'Informujemy, że pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, planowy przyjazd o godzinie {czas}, przyjedzie z opóźnieniem około {opoznienie} minut. Zakłócenia w ruchu, wywołane są trudnymi warunkami atmosferycznymi. Opóźnienie pociągu, może ulec zmianie.',
+            'wjazd_opoznionego': 'Opóźniony pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, przez stacje, {posrednie}, planowy przyjazd o godzinie {czas}, wjedzie na tor {tor}, przy peronie {peron}. Prosimy zachować ostrożność, i nie zbliżać się do krawędzi peronu. Za opóźnienie pociągu, przepraszamy.',
+            'wjazd_opozniony_konczy': 'Opóźniony pociąg {rodzaj} {nazwa}, ze stacji {z}, planowy przyjazd o godzinie {czas}, wjedzie na tor {tor}, przy peronie {peron}. Pociąg kończy bieg. Prosimy zachować ostrożność. Za opóźnienie pociągu, przepraszamy.',
+            'odjazd_opoznionego': 'Opóźniony pociąg {rodzaj} {nazwa}, do stacji {do}, przez stacje, {posrednie}, planowy odjazd o godzinie {czas}, odjedzie z toru {tor}, przy peronie {peron}. Prosimy zachować ostrożność. Za opóźnienie przepraszamy.',
+            'oczekiwanie_skomunikowanie': 'Uwaga! Pociąg {rodzaj} {nazwa}, do stacji {do}, odjedzie z opóźnieniem około {opoznienie} minut, z powodu oczekiwania na skomunikowany pociąg. Za opóźnienie pociągu, przepraszamy.'
         },
         'zaklocenia': {
-            'skrocona': 'Uwaga! Pociąg {rodzaj} {nazwa} do stacji {do} kursuje w relacji skróconej do stacji {skrocona_stacja}. Za utrudnienia przepraszamy.',
-            'odwolanie': 'Pociąg {rodzaj} {nazwa} do stacji {do} planowy odjazd {czas} został odwołany. Przepraszamy za utrudnienia.',
-            'kkz': 'Informujemy, że na odcinku {z} - {do} przewóz realizowany jest autobusową komunikacją zastępczą. Autobusy odjeżdżają z placu przed dworcem.'
+            'odwolany_calkowicie': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, planowy odjazd o godzinie {czas}, został dziś odwołany. Za odwołanie pociągu, przepraszamy.',
+            'skrocony_trasa': 'Informujemy, że dziś, z przyczyn technicznych, pociąg {rodzaj} {nazwa}, do stacji {do}, planowy odjazd o godzinie {czas}, kursuje w relacji skróconej, do stacji {skrocona_stacja}. Za utrudnienia w podróży, przepraszamy.',
+            'awaria_koniec_biegu': 'Pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, stojący na torze {tor}, przy peronie {peron}, z przyczyn technicznych, skończył bieg. Podróżni proszeni są, o opuszczenie pociągu. Za utrudnienia w podróży, przepraszamy.',
+            'droga_okrezna': 'Informujemy, że pociąg {rodzaj} {nazwa}, ze stacji {z}, do stacji {do}, zostanie skierowany drogą okrężną. Wydłuży to czas jazdy, o około {opoznienie} minut. Za utrudnienia w podróży, przepraszamy.',
+            'brak_wagonu': 'Informujemy, że dziś z przyczyn technicznych, pociąg nie prowadzi wagonu {brak_wagonu}, w relacji do stacji {do_grupy}. Podróżnych prosimy o zajęcie miejsc w wagonie zastępczym {zastepczy_wagon}, znajdującym się na {poczatek_koniec} składu pociągu. Za utrudnienia, przepraszamy.'
         },
-        'bezpieczenstwo': {
-            'bagaz': 'W trosce o bezpieczeństwo prosimy o niepozostawianie bagażu bez opieki.',
-            'palenie': 'Przypominamy, że na terenie dworca i peronów obowiązuje całkowity zakaz palenia tytoniu.',
-            'odstep': 'Prosimy o zachowanie bezpiecznej odległości od krawędzi peronu.'
+        'komunikacja_zastepcza': {
+            'zawieszenie_ruchu': 'Informujemy, że z powodu utrudnień na szlaku, ruch pociągów na odcinku {zka_z} - {zka_do}, został zawieszony. Przewóz podróżnych realizowany jest autobusami komunikacji zastępczej. Autobusy odjeżdżają z {miejsce_kz}. Za utrudnienia przepraszamy.',
+            'odjazd_kz': 'Autobus komunikacji zastępczej do stacji {do}, przez, {posrednie}, odjedzie z {miejsce_kz}. Życzymy Państwu, przyjemnej podróży.',
+            'przyjazd_kz': 'Autobus komunikacji zastępczej ze stacji {z}, do stacji {do}, przez, {posrednie}, zatrzyma się, {miejsce_kz}.'
+        },
+        'bezpieczenstwo_inne': {
+            'bagaz': 'W trosce o bezpieczeństwo, prosimy o niepozostawianie bagażu bez opieki. Bagaż pozostawiony bez opieki, zostanie usunięty, i może być zniszczony, na koszt właściciela.',
+            'palenie': 'Szanowni Państwo. Informujemy, że na terenie całego dworca i peronów, obowiązuje całkowity zakaz palenia wyrobów tytoniowych, i papierosów elektronicznych.',
+            'odstep': 'Prosimy o zachowanie bezpiecznej odległości, od krawędzi peronu.',
+            'napoje': 'Uwaga! W związku z utrudnieniami w ruchu pociągów, pasażerowie oczekujący na opóźnione pociągi, mogą skorzystać z napojów, wydawanych bezpłatnie. Podstawą otrzymania napoju, jest okazanie ważnego biletu na przejazd.',
+            'najblizszy_pociag': 'Informujemy, że najbliższy pociąg do stacji {do}, odjedzie o godzinie {czas}, z toru {tor}, przy peronie {peron}.'
         }
     };
 
-    function openAnnounceModal() {
-        if (!currentId) { alert("Najpierw wybierz pociąg z listy!"); return; }
-        document.getElementById('modalZapowiedz').style.display = 'block';
-        document.getElementById('zapowiedz-info').innerText = `${currentData.rodzaj} ${currentData.numer} (${currentData.z} - ${currentData.do})`;
-        
-        document.getElementById('annPeron').value = currentData.peron || '';
-        document.getElementById('annTor').value = currentData.tor || '';
-        document.getElementById('annDelay').value = currentData.opoznienie > 0 ? currentData.opoznienie : 5;
-        document.getElementById('annTime').value = currentData.planO || '';
 
-        updateTemplates();
+    function closeAnnounceModal() { 
+        document.getElementById('modalZapowiedz').style.display = 'none'; 
     }
 
-    function closeAnnounceModal() { document.getElementById('modalZapowiedz').style.display = 'none'; }
-
     function updateTemplates() {
-        const cat = document.getElementById('annCat').value;
+        const catEl = document.getElementById('annCat');
         const varSelect = document.getElementById('annVar');
+        if (!catEl || !varSelect) return;
+
+        const cat = catEl.value;
         varSelect.innerHTML = '';
         
         const variants = TEMPLATES[cat];
+        if (!variants) return;
+
+        // Rozpoznanie, czy stacja pośrednia (na wypadek ręcznej zmiany kategorii przez dyżurnego)
+        let isPosrednia = false;
+        if (currentData) {
+            const selectStacja = document.getElementById('selectStacja');
+            const obecnaStacja = selectStacja ? selectStacja.options[selectStacja.selectedIndex].text.trim() : "";
+            if (currentData.z && obecnaStacja && currentData.z !== obecnaStacja) {
+                isPosrednia = true;
+            }
+        }
+
+        // Ładujemy warianty
         for (const key in variants) {
             let label = key.replace(/_/g, ' ').toUpperCase();
             let opt = document.createElement('option');
             opt.value = key;
             opt.innerText = label;
+            
+            // PRIORYTET 1: Logika wyliczona w openAnnounceModal (window.forcedVariant)
+            if (window.forcedVariant && key === window.forcedVariant) {
+                opt.selected = true;
+            } 
+            // PRIORYTET 2: Jeśli dyżurny zmienił kategorię ręcznie i nie ma wymuszonego wariantu, ratujemy się stacją pośrednią
+            else if (!window.forcedVariant && isPosrednia) {
+                if (cat === 'wjazd' && key === 'posrednia_std') opt.selected = true;
+                else if (cat === 'opoznienie' && key === 'w_trasie_wjazd') opt.selected = true;
+            }
+            
             varSelect.appendChild(opt);
         }
+
+        // PRIORYTET 3: Fallback z samej góry listy, jeśli nic się nie dopasowało
+        if (varSelect.selectedIndex === -1 && varSelect.options.length > 0) {
+            varSelect.options[0].selected = true;
+        }
+
+        // Czyścimy flagę, żeby dyżurny mógł normalnie klikać inne opcje, gdyby zmienił zdanie
+        window.forcedVariant = null; 
+
+        // Generujemy tekst zapowiedzi od razu
         generateAnnouncement();
     }
 
-    function generateAnnouncement() {
-        const cat = document.getElementById('annCat').value;
-        const variant = document.getElementById('annVar').value;
+    function openAnnounceModal() {
+        if (!currentId || !currentData || Object.keys(currentData).length === 0) { 
+            alert("Najpierw wybierz pociąg z listy głównej!"); 
+            return; 
+        }
         
-        if (!TEMPLATES[cat] || !TEMPLATES[cat][variant]) return;
-
-        let tpl = TEMPLATES[cat][variant];
-        const d = currentData;
-
-        const peron = document.getElementById('annPeron').value;
-        const tor = document.getElementById('annTor').value;
-        const delay = document.getElementById('annDelay').value;
-        const time = document.getElementById('annTime').value;
-        const shortInput = document.getElementById('annShort');
-        const skrocona = shortInput ? shortInput.value : d.do;
-
-        let stacjeTekst = "";
+        document.getElementById('modalZapowiedz').style.display = 'block';
+        document.getElementById('zapowiedz-info').innerText = `${currentData.rodzaj || ''} ${currentData.numer || ''} (${currentData.z || ''} - ${currentData.do || ''})`;
         
-        if (d.trasa && d.trasa.length > 0) {
-            let currentIndex = -1;
-            const currentStationNameElement = document.querySelector(`option[value="${stacjaId}"]`);
-            const currentStationName = currentStationNameElement ? currentStationNameElement.text.trim() : "";
+        document.getElementById('annPeron').value = currentData.peron || '';
+        document.getElementById('annTor').value = currentData.tor || '';
+        document.getElementById('annDelay').value = currentData.opoznienie > 0 ? currentData.opoznienie : '';
+        document.getElementById('annTime').value = currentData.planO || currentData.planP || '';
+        
+        try { 
+            if (typeof aktualizujWyswietlacz === 'function') aktualizujWyswietlacz(); 
+        } catch(e) {}
 
-            d.trasa.forEach((t, i) => {
-                if (t.id_stacji == stacjaId || t.nazwa_stacji == currentStationName) {
-                    currentIndex = i;
-                }
-            });
+        // --- AUTOMATYCZNY WYBÓR KATEGORII W OPARCIU O CZAS RZECZYWISTY ---
+        const catEl = document.getElementById('annCat');
+        const opoznienie = parseInt(currentData.opoznienie) || 0;
+        const rodzaj = currentData.rodzaj || '';
+        const pociagiZRezerwacja = ['IC', 'EIC', 'EIP', 'TLK']; 
 
-            if (currentIndex > -1 && currentIndex < d.trasa.length - 1) {
-                let futureStops = d.trasa.slice(currentIndex + 1, d.trasa.length - 1);
-                futureStops = futureStops.filter(s => s.uwagi_postoju === 'ph');
-                let selectedStations = futureStops.filter(s => s.czy_zapowiadac == 1);
+        // 1. Wyciągamy aktualny czas w minutach od północy
+        const now = new Date();
+        const nowMins = now.getHours() * 60 + now.getMinutes();
 
-                if (selectedStations.length < 5) {
-                    let candidatesType1 = futureStops.filter(s => s.czy_zapowiadac == 0 && s.typ_stacji_id == 1);
-                    candidatesType1.sort(() => Math.random() - 0.5);
-                    while (selectedStations.length < 5 && candidatesType1.length > 0) {
-                        selectedStations.push(candidatesType1.pop());
+        const parseTime = (t) => { if(!t) return null; let [h,m] = t.substr(0,5).split(':').map(Number); return h * 60 + m; };
+        const getDiffMins = (target, current) => { let d = target - current; if (d < -720) d += 1440; if (d > 720) d -= 1440; return d; };
+
+        // Realny czas pociągu (plan + opóźnienie)
+        const effPMins = parseTime(currentData.planP) !== null ? parseTime(currentData.planP) + opoznienie : null;
+        const effOMins = parseTime(currentData.planO) !== null ? parseTime(currentData.planO) + opoznienie : null;
+
+        const diffP = effPMins !== null ? getDiffMins(effPMins, nowMins) : null; 
+        const diffO = effOMins !== null ? getDiffMins(effOMins, nowMins) : null;
+
+        // Określamy typ stacji
+        const selectStacja = document.getElementById('selectStacja');
+        const obecnaStacja = selectStacja ? selectStacja.options[selectStacja.selectedIndex].text.trim() : "";
+        const isStart = (currentData.z && currentData.z === obecnaStacja);
+        const isEnd = (currentData.do && currentData.do === obecnaStacja);
+        const isPosrednia = (!isStart && !isEnd);
+
+        let autoCat = 'wjazd';
+        window.forcedVariant = null; 
+
+        if (opoznienie > 5) {
+            autoCat = 'opoznienie';
+            // Inteligencja dla opóźnień:
+            if (isEnd) {
+                window.forcedVariant = 'wjazd_opozniony_konczy'; // Gdy opóźniony kończy u nas bieg
+            } else if (isStart) {
+                window.forcedVariant = 'podstawienie'; // Gdy opóźniony startuje od nas
+            } else {
+                window.forcedVariant = 'w_trasie_wjazd'; // Gdy opóźniony jest u nas w trasie (pośrednia)
+            }
+        } else if (pociagiZRezerwacja.includes(rodzaj)) {
+            autoCat = 'rezerwacja';
+        } else {
+            // KORELACJA Z CZASEM
+            if (isEnd) {
+                autoCat = 'wjazd';
+                window.forcedVariant = 'konczy';
+            } 
+            else if (isStart) {
+                if (diffO !== null) {
+                    if (diffO <= 2 && diffO >= -5) {
+                        autoCat = 'odjazd_postoj';
+                        window.forcedVariant = 'odjazd_std';
+                    } else {
+                        autoCat = 'wjazd';
+                        window.forcedVariant = 'poczatkowa_std';
                     }
                 }
-
-                if (selectedStations.length < 5) {
-                    let candidatesType2 = futureStops.filter(s => s.czy_zapowiadac == 0 && s.typ_stacji_id == 2);
-                    candidatesType2.sort(() => Math.random() - 0.5);
-                    while (selectedStations.length < 5 && candidatesType2.length > 0) {
-                        selectedStations.push(candidatesType2.pop());
+            } 
+            else if (isPosrednia) {
+                if (diffP !== null && diffO !== null) {
+                    let stopDuration = effOMins - effPMins;
+                    if (stopDuration < -720) stopDuration += 1440; 
+                    
+                    if (stopDuration > 2) {
+                        // POSTÓJ > 2 MINUTY - Pełna korelacja
+                        if (diffP > 0) {
+                            autoCat = 'wjazd';
+                            window.forcedVariant = 'posrednia_std';
+                        } else if (diffP <= 0 && diffO > 2) {
+                            autoCat = 'odjazd_postoj';
+                            window.forcedVariant = 'stoi_std';
+                        } else if (diffO <= 2 && diffO >= -5) {
+                            autoCat = 'odjazd_postoj';
+                            window.forcedVariant = 'odjazd_std';
+                        } else {
+                            autoCat = 'wjazd';
+                            window.forcedVariant = 'posrednia_std';
+                        }
+                    } else {
+                        // KRÓTKI POSTÓJ (<= 2 min)
+                        // Żelazna zasada: bezwzględnie wjazd, bo nie ma czasu na nic innego
+                        autoCat = 'wjazd';
+                        window.forcedVariant = 'posrednia_std';
                     }
-                }
-
-                selectedStations.sort((a, b) => parseInt(a.kolejnosc) - parseInt(b.kolejnosc));
-
-                let names = selectedStations.map(s => s.nazwa_stacji);
-                if (names.length > 0) {
-                    stacjeTekst = names.join(", ");
                 }
             }
         }
-        
-        if (stacjeTekst === "") stacjeTekst = "(główne stacje pośrednie)";
+    
+        catEl.value = autoCat;
+        updateTemplates();
+    }
 
-        let rodzajPelna = d.rodzajPelna || d.rodzaj;
-        if (trainTypes[d.rodzaj]) rodzajPelna = trainTypes[d.rodzaj];
-        let nazwaPociagu = d.nazwa ? `"${d.nazwa.toUpperCase()}"` : `numer ${d.numer}`;
+    function generateAnnouncement() {
+        try {
+            if (!currentData || Object.keys(currentData).length === 0) {
+                document.getElementById('announceText').innerText = "Wybierz pociąg z głównej tabeli.";
+                return;
+            }
 
-        let text = tpl
-            .replace(/{rodzaj}/g, rodzajPelna)
-            .replace(/{nazwa}/g, nazwaPociagu)
-            .replace(/{nr}/g, d.numer)
-            .replace(/{z}/g, d.z)
-            .replace(/{do}/g, d.do)
-            .replace(/{peron}/g, peron)
-            .replace(/{tor}/g, tor)
-            .replace(/{opoznienie}/g, delay)
-            .replace(/{czas}/g, time)
-            .replace(/{posrednie}/g, stacjeTekst)
-            .replace(/{skrocona_stacja}/g, skrocona)
-            .replace(/{miejsce_kz}/g, 'przystanku przed dworcem');
+            const catEl = document.getElementById('annCat');
+            const varEl = document.getElementById('annVar');
+            if (!catEl || !varEl) return;
 
-        document.getElementById('announceText').innerText = text;
+            const cat = catEl.value;
+            let variant = varEl.value;
+
+            if (!variant && varEl.options.length > 0) {
+                variant = varEl.options[0].value;
+            }
+
+            const d = currentData;
+
+            // --- AUTOMATYKA STACJI KOŃCOWEJ ---
+            const selectStacja = document.getElementById('selectStacja');
+            const currentStationName = selectStacja && selectStacja.options[selectStacja.selectedIndex] ? selectStacja.options[selectStacja.selectedIndex].text.trim() : "";
+            
+            if (cat === 'wjazd' && currentStationName === d.do && TEMPLATES['wjazd']['konczy']) {
+                variant = 'konczy'; 
+                varEl.value = 'konczy';
+            }
+
+            if (!TEMPLATES[cat] || !TEMPLATES[cat][variant]) {
+                document.getElementById('announceText').innerText = "Brak pasującego szablonu. Sprawdź konsolę F12.";
+                return;
+            }
+
+            let tpl = TEMPLATES[cat][variant];
+
+            // --- NAPRAWA CZYTANIA NUMERÓW WAGONÓW ---
+            // Zmienia np. "526,425" na "526, 425", żeby lektor nie czytał tego jako jednego ułamka
+            const formatNums = str => str ? str.replace(/,/g, ', ').replace(/\s+/g, ' ').trim() : '';
+
+            const peronInput = document.getElementById('annPeron') ? document.getElementById('annPeron').value : '';
+            const torInput = document.getElementById('annTor') ? document.getElementById('annTor').value : '';
+            const delay = document.getElementById('annDelay') ? document.getElementById('annDelay').value : '';
+            // Pobieramy wpisaną wartość i zamieniamy na liczbę całkowitą
+            const rawDelayInput = document.getElementById('annDelay') ? document.getElementById('annDelay').value : '';
+            const rawDelay = parseInt(rawDelayInput);
+            let roundedDelay = "";
+
+            if (!isNaN(rawDelay) && rawDelay > 0) {
+                // Matematyczne zaokrąglenie do najbliższej wielokrotności 5
+                // (11->10, 12->10, 13->15, 7->5, 9->10)
+                roundedDelay = Math.round(rawDelay / 5) * 5;
+                
+                // Zgodnie z Twoją prośbą: jeśli opóźnienie jest mniejsze niż 5, 
+                // ale większe od 0, zawsze pokazujemy "5"
+                if (roundedDelay < 5) {
+                    roundedDelay = 5;
+                }
+            }
+            const time = document.getElementById('annTime') ? document.getElementById('annTime').value : '';
+            
+            const skrocona = document.getElementById('annShort') ? document.getElementById('annShort').value : '';
+            const do_grupy = document.getElementById('annGroupStation') ? document.getElementById('annGroupStation').value : '';
+            const stacja_zmiany_kat = document.getElementById('annChangeCatStation') ? document.getElementById('annChangeCatStation').value : '';
+            const nowa_kategoria = document.getElementById('annNewCat') ? document.getElementById('annNewCat').value : '';
+            
+            const poczatek_koniec = document.getElementById('annWagonsPos') ? document.getElementById('annWagonsPos').value : 'na początku';
+            
+            const wagony_poczatek = formatNums(document.getElementById('annWagonsFront') ? document.getElementById('annWagonsFront').value : '');
+            const wagony_srodek = formatNums(document.getElementById('annWagonsMiddle') ? document.getElementById('annWagonsMiddle').value : '');
+            const wagony_koniec = formatNums(document.getElementById('annWagonsRear') ? document.getElementById('annWagonsRear').value : '');
+            const wagon_kier = formatNums(document.getElementById('annManagerWagon') ? document.getElementById('annManagerWagon').value : '');
+            const brak_wagonu = formatNums(document.getElementById('annMissingWagon') ? document.getElementById('annMissingWagon').value : '');
+            const zastepczy_wagon = formatNums((document.getElementById('annReplacementWagon') && document.getElementById('annReplacementWagon').value) ? document.getElementById('annReplacementWagon').value : "w pozostałych wagonach"); 
+            
+            const miejsce_kz = (document.getElementById('annBusStop') && document.getElementById('annBusStop').value) ? document.getElementById('annBusStop').value : 'placu przed dworcem';
+            
+            // Pobieranie wpisanych stacji dla ZKA
+            let zka_z = document.getElementById('annZkaZ') ? document.getElementById('annZkaZ').value : '';
+            let zka_do = document.getElementById('annZkaDo') ? document.getElementById('annZkaDo').value : '';
+            
+            // Jeśli pola są puste, bierzemy domyślną relację pociągu
+            if (!zka_z) zka_z = d.z || '';
+            if (!zka_do) zka_do = d.do || '';
+
+            let gdzie_wagony_grupa = 'na końcu';
+            if (poczatek_koniec === 'na początku') gdzie_wagony_grupa = 'na końcu';
+            if (poczatek_koniec === 'na końcu') gdzie_wagony_grupa = 'na początku';
+
+            // --- INTELIGENTNA ODMIANA TORÓW I PERONÓW ---
+            const getOdmiana = (numer) => {
+                const odmiany = {
+                    '1': { m: 'pierwszy', b: 'pierwszy', ms: 'pierwszym', d: 'pierwszego' },
+                    '2': { m: 'drugi', b: 'drugi', ms: 'drugim', d: 'drugiego' },
+                    '3': { m: 'trzeci', b: 'trzeci', ms: 'trzecim', d: 'trzeciego' },
+                    '4': { m: 'czwarty', b: 'czwarty', ms: 'czwartym', d: 'czwartego' },
+                    '5': { m: 'piąty', b: 'piąty', ms: 'piątym', d: 'piątego' },
+                    '6': { m: 'szósty', b: 'szósty', ms: 'szóstym', d: 'szóstego' },
+                    '7': { m: 'siódmy', b: 'siódmy', ms: 'siódmym', d: 'siódmego' },
+                    '8': { m: 'ósmy', b: 'ósmy', ms: 'ósmym', d: 'ósmego' },
+                    '9': { m: 'dziewiąty', b: 'dziewiąty', ms: 'dziewiątym', d: 'dziewiątego' },
+                    '10': { m: 'dziesiąty', b: 'dziesiąty', ms: 'dziesiątym', d: 'dziesiątego' }
+                };
+                let num = String(numer || '').trim();
+                return odmiany[num] || { m: num, b: num, ms: num, d: num };
+            };
+
+            let torOdm = getOdmiana(torInput);
+            let peronOdm = getOdmiana(peronInput);
+
+            // --- LOGIKA DOBIERANIA STACJI POŚREDNICH (MEGAFON) ---
+            
+            // --- IDENTYCZNA LOGIKA JAK W WYSWIETLACZU PERONOWYM (NAPRAWA PĘTLI) ---
+            let stacjeTekst = "";
+            if (d.trasa && Array.isArray(d.trasa) && d.trasa.length > 0) {
+                
+                // KLUCZOWA ZMIANA: Szukamy po unikalnym ID postoju, a nie po nazwie!
+                // Dzięki temu system wie, że to pierwsze Dąbie, a nie drugie.
+                let currentIndex = d.trasa.findIndex(t => t.id_szczegolu == currentId);
+                
+                // Zabezpieczenie: jeśli z jakiegoś powodu nie znalazł po ID, szuka po nazwie ORAZ godzinie
+                if (currentIndex === -1) {
+                    currentIndex = d.trasa.findIndex(t => 
+                        (t.id_stacji == stacjaId || t.nazwa_stacji == currentStationName) && 
+                        (t.odjazd?.substr(0,5) === d.planO || t.przyjazd?.substr(0,5) === d.planP)
+                    );
+                }
+                
+                if (currentIndex > -1 && currentIndex < d.trasa.length - 1) {
+                    // Bierzemy wszystkie stacje do samego końca trasy
+                    let futureStops = d.trasa.slice(currentIndex + 1); 
+                    
+                    // FILTR BAZOWY: Bierzemy TYLKO te, gdzie pociąg ma postój handlowy (ph) i nie są stacją końcową
+                    futureStops = futureStops.filter(s => s.uwagi_postoju === 'ph' && s.nazwa_stacji !== d.do);
+                    
+                    let selectedStations = [];
+                    let addedKolejnosc = []; 
+
+                    // --- TWÓJ PRZEŁĄCZNIK W KODZIE ---
+                    // true  = system będzie dopychał listę małymi przystankami, jeśli stacji jest mniej niż 5
+                    // false = system zatrzyma się tylko na głównych stacjach i zignoruje małe przystanki
+                    const DOBIERAJ_MALE_PRZYSTANKI = false; 
+
+                    // KROK 1: Najpierw te z wymuszonym zapowiadaniem (czy_zapowiadac = 1) - BEZ LIMITU!
+                    // KROK 1: Najpierw te z wymuszonym zapowiadaniem (czy_zapowiadac = 1) - BEZ LIMITU!
+                    futureStops.forEach(s => {
+                        if (s.czy_zapowiadac == 1 && !addedKolejnosc.includes(s.kolejnosc)) {
+                            selectedStations.push(s);
+                            addedKolejnosc.push(s.kolejnosc);
+                        }
+                    });
+
+                    // KROK 2: Potem stacje węzłowe (typ_stacji_id = 1) - dopełniamy do 5
+                    futureStops.forEach(s => {
+                        if (selectedStations.length >= 5) return;
+                        if (s.typ_stacji_id == 1 && !addedKolejnosc.includes(s.kolejnosc)) {
+                            selectedStations.push(s);
+                            addedKolejnosc.push(s.kolejnosc);
+                        }
+                    });
+
+                    // KROK 3: Pozostałe stacje, mijanki itp. (wszystko co NIE JEST typem 2) - dopełniamy do 5
+                    futureStops.forEach(s => {
+                        if (selectedStations.length >= 5) return;
+                        if (s.typ_stacji_id != 2 && !addedKolejnosc.includes(s.kolejnosc)) {
+                            selectedStations.push(s);
+                            addedKolejnosc.push(s.kolejnosc);
+                        }
+                    });
+
+                    // KROK 4: Dopychanie małymi przystankami (typ_stacji_id = 2) - TYLKO JEŚLI ZMIENNA = TRUE
+                    if (DOBIERAJ_MALE_PRZYSTANKI) {
+                        futureStops.forEach(s => {
+                            if (selectedStations.length >= 5) return;
+                            if (s.typ_stacji_id == 2 && !addedKolejnosc.includes(s.kolejnosc)) {
+                                selectedStations.push(s);
+                                addedKolejnosc.push(s.kolejnosc);
+                            }
+                        });
+                    }
+                    
+                    // Sortowanie chronologiczne, żeby lektor czytał je po kolei
+                    selectedStations.sort((a, b) => parseInt(a.kolejnosc) - parseInt(b.kolejnosc));
+                    
+                    let names = selectedStations.map(s => s.nazwa_stacji);
+                    if (names.length > 0) { 
+                        stacjeTekst = names.join(", "); 
+                    }
+                }
+                
+            }
+            
+            // Jeśli pociąg naprawde nie ma stacji pośrednich, kasujemy element "przez stacje, ..." z szablonu
+            if (stacjeTekst === "") {
+                tpl = tpl.replace(/przez stacje, \{posrednie\}, /g, '')
+                         .replace(/przez stacje, \{posrednie\}/g, '');
+                stacjeTekst = ""; 
+            }   
+            
+            // Zabezpieczenie na wypadek, gdyby trasa na prawdę nie miała stacji pośrednich (np. pociąg jedzie tylko jedną stację dalej)
+            if (stacjeTekst === "") {
+                // Jeśli nie ma pośrednich, czyścimy tag {posrednie} i fragment zdania, który przed nim stoi
+                tpl = tpl.replace(/przez stacje, \{posrednie\}, /g, '');
+                stacjeTekst = ""; 
+            }
+
+            let rodzajPelna = d.rodzajPelna || d.rodzaj || '';
+            if (d.rodzaj && trainTypes[d.rodzaj]) rodzajPelna = trainTypes[d.rodzaj];
+            
+            // --- NAPRAWA CZYTANIA NAZWY POCIĄGU ---
+            // Zmienia np. "MIESZKO" na "Mieszko" żeby lektor czytał to jako słowo, a nie literował. 
+            // Cudzysłowy zostają, bo są wyciszane przy zamianie na audio, a ładnie wyglądają na podglądzie.
+            let nazwaPociagu = "";
+            if (d.nazwa && d.nazwa !== "null" && d.nazwa.trim() !== "") {
+                let sformatowanaNazwa = d.nazwa.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+                nazwaPociagu = `"${sformatowanaNazwa}"`;
+            }
+
+            let text = tpl
+                .replace(/{rodzaj}/g, rodzajPelna)
+                .replace(/{nazwa}/g, nazwaPociagu)
+                .replace(/{z}/g, d.z || '')
+                .replace(/{do}/g, d.do || '')
+                .replace(/{opoznienie}/g, roundedDelay)
+                .replace(/{czas}/g, time)
+                .replace(/{posrednie}/g, stacjeTekst)
+                .replace(/{skrocona_stacja}/g, skrocona)
+                .replace(/{do_grupy}/g, do_grupy)
+                .replace(/{stacja_zmiany_kat}/g, stacja_zmiany_kat)
+                .replace(/{nowa_kategoria}/g, nowa_kategoria)
+                .replace(/{poczatek_koniec}/g, poczatek_koniec)
+                .replace(/{gdzie_wagony}/g, poczatek_koniec)
+                .replace(/{gdzie_wagony_grupa}/g, gdzie_wagony_grupa)
+                .replace(/{wagony_poczatek}/g, wagony_poczatek)
+                .replace(/{wagony_srodek}/g, wagony_srodek)
+                .replace(/{wagony_koniec}/g, wagony_koniec)
+                .replace(/{wagon_kier}/g, wagon_kier)
+                .replace(/{brak_wagonu}/g, brak_wagonu)
+                .replace(/{zastepczy_wagon}/g, zastepczy_wagon)
+                .replace(/{miejsce_kz}/g, miejsce_kz)
+                .replace(/{zka_z}/g, zka_z)     
+                .replace(/{zka_do}/g, zka_do)
+                .replace(/{wagony_poza}/g, brak_wagonu); 
+
+            // --- ZASTĘPOWANIE KONTEKSTOWE DLA TORÓW I PERONÓW ---
+            text = text.replace(/na tor \{tor\}/g, `na tor ${torOdm.b}`)
+                       .replace(/z toru \{tor\}/g, `z toru ${torOdm.d}`)
+                       .replace(/po torze \{tor\}/g, `po torze ${torOdm.ms}`)
+                       .replace(/na torze \{tor\}/g, `na torze ${torOdm.ms}`)
+                       .replace(/\{tor\}/g, torOdm.m) 
+                       .replace(/przy peronie \{peron\}/g, `przy peronie ${peronOdm.ms}`)
+                       .replace(/na peron \{peron\}/g, `na peron ${peronOdm.b}`)
+                       .replace(/\{peron\}/g, peronOdm.m); 
+
+            text = text.replace(/ ,/g, ',');    
+            text = text.replace(/, ,/g, ',');   
+            text = text.replace(/,,/g, ',');    
+            text = text.replace(/,\./g, '.');   
+            text = text.replace(/ \./g, '.');   
+            text = text.replace(/\s+/g, ' ');   
+            text = text.replace(/, \./g, '.');  
+            text = text.trim();
+
+            document.getElementById('announceText').innerText = text;
+
+        } catch (error) {
+            document.getElementById('announceText').innerText = "BŁĄD JS: " + error.message;
+            console.error("Błąd generowania zapowiedzi:", error);
+        }
     }
 
     function copyAnnouncement() {
         const text = document.getElementById('announceText').innerText;
+        if(text.includes("BŁĄD JS")) {
+            alert("Nie kopiuj błędu, sprawdź co poszło nie tak.");
+            return;
+        }
         navigator.clipboard.writeText(text).then(() => alert("Treść skopiowana do schowka!"));
+    }
+    
+    function playAnnouncement() {
+        const text = document.getElementById('announceText').innerText;
+        if (!text || text.trim() === "" || text.includes("BŁĄD JS") || text.includes("Wybierz pociąg")) {
+            alert("Brak poprawnego tekstu zapowiedzi!");
+            return;
+        }
+
+        const btn = document.getElementById('btnPlay');
+        const originalText = btn.innerText;
+        
+        btn.innerText = "⏳ Ładowanie...";
+        btn.disabled = true;
+
+        fetch('generuj_audio.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.audio_url) {
+                btn.innerText = "🔊 Odtwarzanie...";
+                
+                // Tworzymy odtwarzacze dla gongu i lektora
+                const gongAudio = new Audio('gong.mp3');
+                const ttsAudio = new Audio(data.audio_url);
+                
+                // Najpierw próbujemy odpalić gong
+                gongAudio.play().catch(e => {
+                    console.log("Nie znaleziono pliku gong.mp3, odpalam samego lektora.", e);
+                    ttsAudio.play(); // Jak nie znajdzie gongu, od razu gada
+                });
+                
+                // Kiedy gong się skończy, odpalamy lektora
+                gongAudio.onended = () => {
+                    ttsAudio.play();
+                };
+                
+                // Kiedy lektor skończy gadać, odblokowujemy przycisk
+                ttsAudio.onended = function() {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                };
+                
+                ttsAudio.onerror = function() {
+                     alert("Błąd odtwarzania pliku przez przeglądarkę.");
+                     btn.innerText = originalText;
+                     btn.disabled = false;
+                };
+            } else {
+                alert("Błąd serwera TTS: " + (data.error || "Nie zwrócono pliku."));
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error(error);
+            alert("Błąd połączenia z Twoim serwerem (generuj_audio.php).");
+            btn.innerText = originalText;
+            btn.disabled = false;
+        });
+    }
+
+    // --- NOWE FUNKCJE DO WYŚWIETLACZY PERONOWYCH ---
+    function openWyswietlaczModal() {
+        if (!currentId || !currentData || Object.keys(currentData).length === 0) { 
+            alert("Najpierw wybierz pociąg z głównej tabeli!"); 
+            return; 
+        }
+        document.getElementById('modalWyswietlacz').style.display = 'block';
+        document.getElementById('wyswietlacz-info').innerText = `${currentData.rodzaj || ''} ${currentData.numer || ''} (${currentData.z || ''} - ${currentData.do || ''})`;
+        
+        // Zaciąga domyślne wartości z rozkładu (peron i tor)
+        document.getElementById('wysw-peron').value = currentData.peron || '';
+        document.getElementById('wysw-tor').value = currentData.tor || '';
+        document.getElementById('wysw-komunikat').value = '';
+    }
+
+    function closeWyswietlaczModal() {
+        document.getElementById('modalWyswietlacz').style.display = 'none';
+    }
+
+    function zapiszWyswietlacz() {
+        const p = document.getElementById('wysw-peron').value.trim();
+        const t = document.getElementById('wysw-tor').value.trim();
+        
+        if(p === '' || t === '') {
+            alert("Musisz podać peron i tor!");
+            return;
+        }
+
+        const fd = new FormData();
+        fd.append('id_szczegolu', currentId);
+        fd.append('peron', p);
+        fd.append('tor', t);
+        fd.append('komunikat', document.getElementById('wysw-komunikat').value);
+        fd.append('akcja', 'zapisz');
+
+        fetch('ustaw_wyswietlacz.php', { method: 'POST', body: fd })
+            .then(res => res.text())
+            .then(txt => {
+                if(txt === "OK") {
+                    alert("Dane wysłane pomyślnie na wyświetlacz!");
+                    closeWyswietlaczModal();
+                } else {
+                    alert("Wystąpił błąd: " + txt);
+                }
+            });
+    }
+    function drukujTablice() {
+        if (!currentPrzejazdId) {
+            alert("Najpierw wybierz pociąg z głównej tabeli!");
+            return;
+        }
+        // Otwiera nową kartę z gotową tablicą do druku
+        window.open('drukuj_tablice.php?id_przejazdu=' + currentPrzejazdId, '_blank');
     }
 </script>
 </body>

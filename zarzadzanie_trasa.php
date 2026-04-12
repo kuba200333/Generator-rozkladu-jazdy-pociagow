@@ -2,6 +2,15 @@
 session_start();
 require 'db_config.php';
 
+// Definicja dostępnych symboli (piktogramów) do edytora
+$available_symbols = [
+    'klasa_1' => '1 klasa', 'klasa_2' => '2 klasa', 'rower' => 'Przewóz rowerów', 'rezerwacja' => 'Rezerwacja',
+    'wozek_rampa' => 'Wózek (rampa)', 'wozek_bez_rampy' => 'Wózek (bez rampy)', 'kuszetka' => 'Kuszetka',
+    'sypialny' => 'Sypialny', 'bar' => 'Barowy', 'restauracyjny' => 'Restauracyjny',
+    'automat' => 'Przekąski', 'wifi' => 'WiFi', 'klima' => 'Klimatyzacja',
+    'przewijak' => 'Przewijak', 'duzy_bagaz' => 'Duży bagaż'
+];
+
 // Helper do formatowania czasu opóźnienia dla MySQL
 function calculateDelayStr($timestamp_rzecz, $timestamp_plan) {
     if ($timestamp_rzecz - $timestamp_plan > 43200) $timestamp_rzecz -= 86400;
@@ -21,11 +30,44 @@ function calculateDelayStr($timestamp_rzecz, $timestamp_plan) {
 // --- LOGIKA OBSŁUGI ZMIAN ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     
+    // NOWOŚĆ: MASOWE USUWANIE POCIĄGÓW
+    if (isset($_POST['action']) && $_POST['action'] == 'delete_trains') {
+        if (!empty($_POST['train_ids'])) {
+            $ids = array_map('intval', $_POST['train_ids']);
+            $ids_str = implode(',', $ids);
+            
+            // Najpierw usuwamy szczegóły (stacje), potem główny wpis, żeby baza nie wywaliła błędu klucza
+            mysqli_query($conn, "DELETE FROM szczegoly_rozkladu WHERE id_przejazdu IN ($ids_str)");
+            mysqli_query($conn, "DELETE FROM przejazdy WHERE id_przejazdu IN ($ids_str)");
+        }
+        header("Location: zarzadzanie_trasa.php");
+        exit;
+    }
+
+    // NOWOŚĆ: AKTUALIZACJA GŁÓWNYCH DANYCH POCIĄGU
+    if (isset($_POST['action']) && $_POST['action'] == 'update_train_info') {
+        $id_przejazdu = (int)$_POST['id_przejazdu'];
+        $numer = $_POST['numer_pociagu'];
+        $nazwa = $_POST['nazwa_pociagu'];
+        $id_typu = (int)$_POST['id_typu_pociagu'];
+        $daty = $_POST['daty_kursowania'];
+        $dni = $_POST['dni_kursowania'];
+        
+        // Zbieramy zaznaczone piktogramy
+        $symbole_zaznaczone = isset($_POST['symbole']) ? $_POST['symbole'] : [];
+        $symbole_json = json_encode($symbole_zaznaczone, JSON_UNESCAPED_UNICODE);
+
+        $stmt = mysqli_prepare($conn, "UPDATE przejazdy SET numer_pociagu = ?, nazwa_pociagu = ?, id_typu_pociagu = ?, daty_kursowania = ?, dni_kursowania = ?, symbole = ? WHERE id_przejazdu = ?");
+        mysqli_stmt_bind_param($stmt, "ssisssi", $numer, $nazwa, $id_typu, $daty, $dni, $symbole_json, $id_przejazdu);
+        mysqli_stmt_execute($stmt);
+        
+        header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
+        exit;
+    }
+
     // 1. ZMIANA STATUSU (Odwołany / ZKA / Przywracanie)
     if (isset($_POST['action']) && $_POST['action'] == 'update_status') {
         $id_szczegolu = (int)$_POST['id_szczegolu'];
-        
-        // Pobieramy wartość bezpośrednio (0 lub 1)
         $czy_odwolany = (int)$_POST['czy_odwolany']; 
         $typ_transportu = $_POST['typ_transportu']; 
         
@@ -33,64 +75,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         mysqli_stmt_bind_param($stmt, "isi", $czy_odwolany, $typ_transportu, $id_szczegolu);
         mysqli_stmt_execute($stmt);
         
-        // POPRAWKA: Przy zmianie statusu przywracamy czasy PLANOWE do RZECZYWISTYCH
-        // Zamiast NULL, wpisujemy tam wartości z kolumn 'przyjazd' i 'odjazd'
         mysqli_query($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd WHERE id_szczegolu = $id_szczegolu");
         
         header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $_POST['id_przejazdu']);
         exit;
     }
 
-    // 2. EDYCJA WIERSZA Z PROPAGACJĄ "TWARDĄ"
-    if (isset($_POST['action']) && $_POST['action'] == 'save_row') {
-        $id_szczegolu = (int)$_POST['id_szczegolu'];
-        $id_przejazdu = (int)$_POST['id_przejazdu'];
-        $kolejnosc = (int)$_POST['kolejnosc'];
-        
-        $nowy_przyjazd_rzecz = !empty($_POST['przyjazd']) ? $_POST['przyjazd'] . ":00" : null;
-        $nowy_odjazd_rzecz = !empty($_POST['odjazd']) ? $_POST['odjazd'] . ":00" : null;
-        $peron = $_POST['peron'];
-        $tor = $_POST['tor'];
-        $uwagi_postoju = $_POST['uwagi_postoju'];
-
-        $q_plan = mysqli_query($conn, "SELECT przyjazd, odjazd FROM szczegoly_rozkladu WHERE id_szczegolu = $id_szczegolu");
-        $row_plan = mysqli_fetch_assoc($q_plan);
-        
-        $stmt = mysqli_prepare($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = ?, odjazd_rzecz = ?, peron = ?, tor = ?, uwagi_postoju = ? WHERE id_szczegolu = ?");
-        mysqli_stmt_bind_param($stmt, "sssssi", $nowy_przyjazd_rzecz, $nowy_odjazd_rzecz, $peron, $tor, $uwagi_postoju, $id_szczegolu);
-        mysqli_stmt_execute($stmt);
-
-        // --- PROPAGACJA ---
-        $delay_str = null;
-        $today = date('Y-m-d');
-
-        if ($nowy_odjazd_rzecz && $row_plan['odjazd']) {
-            $ts_rzecz = strtotime("$today $nowy_odjazd_rzecz");
-            $ts_plan = strtotime("$today " . $row_plan['odjazd']);
-            $delay_str = calculateDelayStr($ts_rzecz, $ts_plan);
-        } 
-        elseif ($nowy_przyjazd_rzecz && $row_plan['przyjazd']) {
-            $ts_rzecz = strtotime("$today $nowy_przyjazd_rzecz");
-            $ts_plan = strtotime("$today " . $row_plan['przyjazd']);
-            $delay_str = calculateDelayStr($ts_rzecz, $ts_plan);
-        }
-
-        if ($delay_str !== null) {
-            $sql_prop = "UPDATE szczegoly_rozkladu SET 
-                         przyjazd_rzecz = ADDTIME(przyjazd, ?), 
-                         odjazd_rzecz = ADDTIME(odjazd, ?) 
-                         WHERE id_przejazdu = ? AND kolejnosc > ?";
-            
-            $stmt_prop = mysqli_prepare($conn, $sql_prop);
-            mysqli_stmt_bind_param($stmt_prop, "ssii", $delay_str, $delay_str, $id_przejazdu, $kolejnosc);
-            mysqli_stmt_execute($stmt_prop);
-        }
-
-        header("Location: zarzadzanie_trasa.php?id_przejazdu=" . $id_przejazdu);
-        exit;
-    }
-
-    // 3. MASOWY ZAPIS
+    // 2. MASOWY ZAPIS STACJI (zastępuje też zapis pojedynczy w tym widoku)
     if (isset($_POST['action']) && $_POST['action'] == 'save_updates') {
         $id_przejazdu = (int)$_POST['id_przejazdu'];
         $rows = $_POST['rows'];
@@ -111,17 +102,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit;
     }
 
-    // 3A. RESETOWANIE CZASÓW (Przywracanie do planu)
+    // 3. RESETOWANIE CZASÓW
     if (isset($_POST['action']) && $_POST['action'] == 'reset_times') {
         $id_przejazdu = (int)$_POST['id_przejazdu'];
-
-        // POPRAWKA KLUCZOWA: Kopiujemy czas PLANOWY do RZECZYWISTEGO
-        // Dzięki temu pola nie są puste (NULL), tylko wypełnione czasem z rozkładu (opóźnienie = 0)
-        $sql_reset = "UPDATE szczegoly_rozkladu 
-                      SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd 
-                      WHERE id_przejazdu = ?";
-
-        $stmt_reset = mysqli_prepare($conn, $sql_reset);
+        $sql_reset = "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd WHERE id_przejazdu = ?";
+        $stmt_reset = mysqli_prepare($conn, "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = przyjazd, odjazd_rzecz = odjazd WHERE id_przejazdu = ?");
         mysqli_stmt_bind_param($stmt_reset, "i", $id_przejazdu);
         mysqli_stmt_execute($stmt_reset);
         
@@ -147,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit;
     }
 
-    // 5. DODAWANIE STACJI
+    // 5. DODAWANIE STACJI (Oryginalna logika)
     if (isset($_POST['action']) && $_POST['action'] == 'add_station') {
         $id_przejazdu = (int)$_POST['id_przejazdu'];
         $insert_after = (int)$_POST['insert_after'];
@@ -210,13 +195,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             $rzecz_arrival_at_next = strtotime($form_odjazd_rzecz) + $travel_time_2_sec;
             $plan_arrival_at_next = strtotime($row_next['przyjazd']);
-            
             $delay_str = calculateDelayStr($rzecz_arrival_at_next, $plan_arrival_at_next);
             
-            $sql_prop = "UPDATE szczegoly_rozkladu SET 
-                         przyjazd_rzecz = ADDTIME(przyjazd, ?), 
-                         odjazd_rzecz = ADDTIME(odjazd, ?) 
-                         WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $new_kolejnosc";
+            $sql_prop = "UPDATE szczegoly_rozkladu SET przyjazd_rzecz = ADDTIME(przyjazd, ?), odjazd_rzecz = ADDTIME(odjazd, ?) WHERE id_przejazdu = $id_przejazdu AND kolejnosc > $new_kolejnosc";
             
             $stmt_prop = mysqli_prepare($conn, $sql_prop);
             mysqli_stmt_bind_param($stmt_prop, "ss", $delay_str, $delay_str);
@@ -230,9 +211,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 $id_przejazdu = $_GET['id_przejazdu'] ?? null;
 $trasa_data = [];
+$info = [];
 
 if ($id_przejazdu) {
-    $res_info = mysqli_query($conn, "SELECT p.numer_pociagu, p.nazwa_pociagu FROM przejazdy p WHERE p.id_przejazdu = $id_przejazdu");
+    $res_info = mysqli_query($conn, "SELECT p.*, t.nazwa_trasy FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy WHERE p.id_przejazdu = $id_przejazdu");
     $info = mysqli_fetch_assoc($res_info);
 
     $sql = "SELECT sr.*, s.nazwa_stacji 
@@ -255,44 +237,15 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; font-size: 13px; }
         
-        .top-bar {
-            background-color: #004080;
-            color: white;
-            padding: 10px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            position: sticky; top: 0; z-index: 100;
-        }
+        .top-bar { background-color: #004080; color: white; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); position: sticky; top: 0; z-index: 100; }
         .top-bar h1 { margin: 0; font-size: 18px; }
         .top-bar a { color: #fff; text-decoration: none; margin-left: 20px; font-weight: bold; background: rgba(255,255,255,0.2); padding: 5px 10px; border-radius: 4px; }
         .top-bar a:hover { background: rgba(255,255,255,0.3); }
 
         .container { padding: 20px; display: flex; gap: 20px; height: calc(100vh - 80px); }
         
-        .left-panel {
-            width: 300px;
-            background: white;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            padding: 15px;
-            overflow-y: auto;
-            display: flex; flex-direction: column;
-            box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-        }
-
-        .right-panel {
-            flex: 1;
-            background: white;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            padding: 15px;
-            overflow-y: auto;
-            display: flex; flex-direction: column;
-            box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-            position: relative;
-        }
+        .left-panel { width: 350px; background: white; border: 1px solid #ccc; border-radius: 5px; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); }
+        .right-panel { flex: 1; background: white; border: 1px solid #ccc; border-radius: 5px; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); position: relative; }
 
         h2 { margin-top: 0; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; font-size: 16px; }
 
@@ -314,27 +267,8 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
         .btn-del { background: #dc3545; } .btn-del:hover { background: #c82333; }
         .btn-add { background: #007bff; width: 100%; padding: 8px; margin-top: 10px; }
         
-        .bulk-save-bar {
-            position: sticky;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: #e9ecef;
-            padding: 10px;
-            border-top: 1px solid #ccc;
-            text-align: right;
-            z-index: 20;
-        }
-        .btn-bulk {
-            padding: 10px 20px;
-            font-size: 14px;
-            background: #004080;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
+        .bulk-save-bar { position: sticky; bottom: 0; left: 0; right: 0; background: #e9ecef; padding: 10px; border-top: 1px solid #ccc; text-align: right; z-index: 20; }
+        .btn-bulk { padding: 10px 20px; font-size: 14px; background: #004080; color: white; border: none; border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
         .btn-bulk:hover { background: #003366; }
 
         .add-box { background: #e9ecef; padding: 10px; border: 1px solid #ced4da; margin-top: 20px; border-radius: 4px; }
@@ -348,6 +282,19 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
         .slider:before { position: absolute; content: ""; height: 10px; width: 10px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
         input:checked + .slider { background-color: #dc3545; }
         input:checked + .slider:before { transform: translateX(14px); }
+
+        /* Style dla listy pociągów po lewej */
+        .train-item { display:flex; align-items:center; padding: 6px; border-bottom:1px solid #eee; transition: background 0.2s; }
+        .train-item:hover { background-color: #f1f8ff; }
+        .train-item.active { background-color: #dbeafe; border-left: 4px solid #007bff; }
+        .train-item a { text-decoration:none; color:#333; flex-grow:1; margin-left: 8px; display: block;}
+        .train-item a b { color: #004080; }
+
+        /* Edytor Danych Głównych */
+        .main-editor-box { background: #eef7ff; padding: 15px; border: 1px solid #b8daff; border-radius: 5px; margin-bottom: 20px; }
+        .main-editor-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+        .main-editor-grid input[type="text"], .main-editor-grid select { width: 100%; padding: 5px; border: 1px solid #ccc; border-radius: 3px; box-sizing: border-box; }
+        .symbols-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 10px; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -363,27 +310,106 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
 <div class="container">
     
     <div class="left-panel">
-        <h2>Wybór Pociągu</h2>
-        <form method="GET">
-            <select name="id_przejazdu" onchange="this.form.submit()" size="20" style="width: 100%; height: 100%; border: 1px solid #ddd; padding: 5px;">
+        <h2>Wybór i Usuwanie Pociągów</h2>
+        
+        <form method="POST" id="bulkDeleteForm" onsubmit="return confirm('Czy na pewno usunąć wszystkie zaznaczone pociągi? Tego nie da się cofnąć!')">
+            <input type="hidden" name="action" value="delete_trains">
+            
+            <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 10px; background: #f8f9fa; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                <label style="cursor: pointer; font-weight: bold;">
+                    <input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)"> Zaznacz wszystkie
+                </label>
+                <button type="submit" class="btn btn-del" style="padding: 6px 12px; font-size: 12px;">🗑️ Usuń wybrane</button>
+            </div>
+
+            <div style="flex-grow: 1; overflow-y: auto; border: 1px solid #ddd; background: #fff;">
                 <?php
                 $sql_list = "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy 
                              FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy 
                              ORDER BY p.data_utworzenia DESC";
                 $res_list = mysqli_query($conn, $sql_list);
                 while($r = mysqli_fetch_assoc($res_list)) {
-                    $sel = ($id_przejazdu == $r['id_przejazdu']) ? 'selected' : '';
-                    $display = "{$r['numer_pociagu']} " . ($r['nazwa_pociagu'] ? "\"{$r['nazwa_pociagu']}\"" : "") . " -> {$r['nazwa_trasy']}";
-                    echo "<option value='{$r['id_przejazdu']}' $sel>{$display}</option>";
+                    $active_class = ($id_przejazdu == $r['id_przejazdu']) ? 'active' : '';
+                    echo "<div class='train-item {$active_class}'>";
+                    echo "<input type='checkbox' name='train_ids[]' value='{$r['id_przejazdu']}' class='train-cb'>";
+                    echo "<a href='?id_przejazdu={$r['id_przejazdu']}'>
+                            <b>{$r['numer_pociagu']}</b> " . ($r['nazwa_pociagu'] ? "\"{$r['nazwa_pociagu']}\"" : "") . "<br>
+                            <span style='color:#777; font-size: 11px;'>🚏 {$r['nazwa_trasy']}</span>
+                          </a>";
+                    echo "</div>";
                 }
                 ?>
-            </select>
+            </div>
         </form>
     </div>
 
     <div class="right-panel">
         <?php if($id_przejazdu): ?>
-            <h2>Edycja Trasy: <?= $info['numer_pociagu'] ?> <?= $info['nazwa_pociagu'] ?></h2>
+            
+            <div class="main-editor-box">
+                <h4 style="margin: 0 0 10px 0; color: #004080;">📝 Edycja głównych parametrów pociągu (Tabela Przejazdy)</h4>
+                <form action="zarzadzanie_trasa.php" method="POST">
+                    <input type="hidden" name="action" value="update_train_info">
+                    <input type="hidden" name="id_przejazdu" value="<?= $id_przejazdu ?>">
+                    
+                    <div class="main-editor-grid">
+                        <div>
+                            <label style="font-weight:bold; font-size:11px;">Numer pociągu:</label><br>
+                            <input type="text" name="numer_pociagu" value="<?= htmlspecialchars($info['numer_pociagu']) ?>" required>
+                        </div>
+                        <div>
+                            <label style="font-weight:bold; font-size:11px;">Nazwa pociągu:</label><br>
+                            <input type="text" name="nazwa_pociagu" value="<?= htmlspecialchars($info['nazwa_pociagu'] ?? '') ?>">
+                        </div>
+                        <div>
+                            <label style="font-weight:bold; font-size:11px;">Kategoria pociągu:</label><br>
+                            <select name="id_typu_pociagu" required>
+                                <?php
+                                $query_typy = "SELECT id_typu, skrot FROM typy_pociagow ORDER BY skrot";
+                                $result_typy = mysqli_query($conn, $query_typy);
+                                while ($row = mysqli_fetch_assoc($result_typy)) {
+                                    $sel = ($row['id_typu'] == $info['id_typu_pociagu']) ? 'selected' : '';
+                                    echo "<option value='{$row['id_typu']}' $sel>{$row['skrot']}</option>";
+                                }
+                                ?>
+                            </select>
+                        </div>
+                        <div style="grid-column: span 3; display: flex; gap: 15px;">
+                            <div style="flex: 1;">
+                                <label style="font-weight:bold; font-size:11px;">Daty obowiązywania:</label><br>
+                                <input type="text" name="daty_kursowania" value="<?= htmlspecialchars($info['daty_kursowania'] ?? '') ?>" placeholder="np. 15 VI - 30 VIII">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="font-weight:bold; font-size:11px;">Dni/Uwagi (do tablic):</label><br>
+                                <input type="text" name="dni_kursowania" value="<?= htmlspecialchars($info['dni_kursowania'] ?? '') ?>" placeholder="np. kursuje w 1,2,3">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <label style="font-weight:bold; font-size:11px; display:block; margin-top: 10px;">Zaznaczone piktogramy/symbole:</label>
+                    <div class="symbols-grid">
+                        <?php
+                        $zapisane_symbole = json_decode($info['symbole'] ?? '[]', true);
+                        if(!is_array($zapisane_symbole)) {
+                            // Kompatybilność wsteczna jeśli były trzymane po przecinku
+                            $zapisane_symbole = explode(',', str_replace(['"', '[', ']', '\\'], '', $info['symbole'] ?? ''));
+                        }
+                        $zapisane_symbole = array_map('trim', $zapisane_symbole);
+
+                        foreach ($available_symbols as $key => $label) {
+                            $checked = in_array($key, $zapisane_symbole) ? "checked" : "";
+                            echo "<label><input type='checkbox' name='symbole[]' value='{$key}' {$checked}> {$label}</label>";
+                        }
+                        ?>
+                    </div>
+
+                    <div style="text-align: right; margin-top: 10px;">
+                        <button type="submit" class="btn btn-save" style="padding: 8px 15px; font-size: 12px;">💾 Zapisz Główne Parametry</button>
+                    </div>
+                </form>
+            </div>
+
+            <h2>Szczegółowa Trasa (Godziny, Perony, Postoje)</h2>
             
             <form method="POST" id="mainForm">
                 <input type="hidden" name="action" value="save_updates">
@@ -453,14 +479,7 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
                             </td>
                             
                             <td>
-                                <button type="submit" name="save_single_id" value="<?= $ids ?>" class="btn btn-save" title="Zapisz tylko ten wiersz i przelicz resztę">💾</button>
-                                <input type="hidden" name="uwagi_postoju" value="<?= $uwagi ?>" id="single_uwagi_<?= $ids ?>">
-                                <script>
-                                    // Hack: synchronizacja selecta z ukrytym inputem dla single save
-                                    document.querySelector('select[name="rows[<?= $ids ?>][uwagi_postoju]"]').addEventListener('change', function() {
-                                        document.getElementById('single_uwagi_<?= $ids ?>').value = this.value;
-                                    });
-                                </script>
+                                <button type="submit" name="save_single_id" value="<?= $ids ?>" class="btn btn-save" title="Zapisz tylko ten wiersz">💾</button>
                             </td>
                             
                             <td align="center">
@@ -473,7 +492,7 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
                 
                 <div class="bulk-save-bar">
                     <button type="button" class="btn-bulk" style="background: #e67e22;" onclick="confirmResetTimes(<?= $id_przejazdu ?>)">🗑️ RESETUJ CZASY RZECZYWISTE</button>
-                    <button type="submit" class="btn-bulk">💾 ZAPISZ CAŁY ROZKŁAD (MASOWO)</button>
+                    <button type="submit" class="btn-bulk">💾 ZAPISZ ROZKŁAD TRASY (MASOWO)</button>
                 </div>
             </form>
 
@@ -564,7 +583,7 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
 
         <?php else: ?>
             <div style="text-align: center; margin-top: 100px; color: #999;">
-                <h2>&larr; Wybierz pociąg z listy po lewej, aby edytować trasę.</h2>
+                <h2>&larr; Wybierz pociąg z listy po lewej, aby edytować trasę lub zaznacz pociągi do usunięcia.</h2>
             </div>
         <?php endif; ?>
     </div>
@@ -588,6 +607,14 @@ $all_stations = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje 
     function confirmResetTimes(id_przejazdu) {
         if(confirm('Czy na pewno chcesz ZRESETOWAĆ WSZYSTKIE CZASY RZECZYWISTE dla tej trasy? Spowoduje to powrót do czasów PLANOWYCH.')) {
             document.getElementById('resetForm').submit();
+        }
+    }
+
+    // Logika do masowego zaznaczania checkboxów na liście pociągów
+    function toggleSelectAll(source) {
+        let checkboxes = document.querySelectorAll('.train-cb');
+        for(let i=0; i<checkboxes.length; i++) {
+            checkboxes[i].checked = source.checked;
         }
     }
 </script>

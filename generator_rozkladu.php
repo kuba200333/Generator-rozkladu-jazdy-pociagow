@@ -16,6 +16,33 @@ if (isset($_POST['action']) && $_POST['action'] === 'reset') {
     exit;
 }
 
+// --- AUTO-MIGRACJA TABEL SŁOWNIKOWYCH ---
+mysqli_query($conn, "CREATE TABLE IF NOT EXISTS nazwy_pociagow (id INT AUTO_INCREMENT PRIMARY KEY, nazwa VARCHAR(100) NOT NULL UNIQUE)");
+mysqli_query($conn, "CREATE TABLE IF NOT EXISTS szablony_postojow (id INT AUTO_INCREMENT PRIMARY KEY, id_trasy INT NOT NULL, nazwa_szablonu VARCHAR(100) NOT NULL, typy TEXT, czasy TEXT)");
+
+// --- OBSŁUGA SZABLONÓW (AJAX) ---
+if (isset($_POST['ajax_action'])) {
+    header('Content-Type: application/json');
+    if ($_POST['ajax_action'] == 'save_szablon') {
+        $id_t = (int)$_POST['id_trasy'];
+        $n = mysqli_real_escape_string($conn, trim($_POST['nazwa']));
+        $typy = mysqli_real_escape_string($conn, $_POST['typy']);
+        $czasy = mysqli_real_escape_string($conn, $_POST['czasy']);
+        
+        mysqli_query($conn, "DELETE FROM szablony_postojow WHERE id_trasy=$id_t AND nazwa_szablonu='$n'");
+        mysqli_query($conn, "INSERT INTO szablony_postojow (id_trasy, nazwa_szablonu, typy, czasy) VALUES ($id_t, '$n', '$typy', '$czasy')");
+        echo json_encode(['success'=>true]);
+        exit;
+    }
+    if ($_POST['ajax_action'] == 'delete_szablon') {
+        $id_t = (int)$_POST['id_trasy'];
+        $n = mysqli_real_escape_string($conn, trim($_POST['nazwa']));
+        mysqli_query($conn, "DELETE FROM szablony_postojow WHERE id_trasy=$id_t AND nazwa_szablonu='$n'");
+        echo json_encode(['success'=>true]);
+        exit;
+    }
+}
+
 // Definicja dostępnych symboli (piktogramów)
 $available_symbols = [
     'klasa_1' => '1 klasa', 'klasa_2' => '2 klasa', 'rower' => 'Przewóz rowerów', 'rezerwacja' => 'Rezerwacja obowiązkowa',
@@ -25,7 +52,7 @@ $available_symbols = [
     'przewijak' => 'Miejsce do przewijania dziecka', 'duzy_bagaz' => 'Miejsce na duży bagaż'
 ];
 
-// --- STATYSTYKI Z BAZY DANYCH (Wyciągamy najczęstsze piktogramy - min 75%) ---
+// --- STATYSTYKI Z BAZY DANYCH ---
 $statystyki_symboli = [];
 $res_symbole = @mysqli_query($conn, "SELECT id_typu_pociagu, symbole FROM przejazdy WHERE symbole IS NOT NULL AND symbole != ''");
 if ($res_symbole) {
@@ -40,7 +67,6 @@ if ($res_symbole) {
         $ilosc_pociagow[$typ]++;
         
         $sym = $r['symbole'];
-        // Trawimy to co siedzi w bazie (JSON lub po przecinku)
         $tablica_symboli = json_decode($sym, true);
         if (!is_array($tablica_symboli)) {
             $tablica_symboli = explode(',', $sym);
@@ -54,7 +80,6 @@ if ($res_symbole) {
         }
     }
     
-    // Zbieramy tylko te, które mają >= 75% wystąpień dla swojej kategorii
     foreach ($zliczenia as $typ => $symbole_zliczone) {
         $statystyki_symboli[$typ] = [];
         foreach ($symbole_zliczone as $s => $liczba) {
@@ -65,7 +90,6 @@ if ($res_symbole) {
     }
 }
 
-// Ustawiamy domyślne dni kursowania na starcie, jeśli są puste
 if (empty($_SESSION['dni_kursowania'])) {
     $opcje_dni = ['①-⑤', '①-⑦', '⑥-⑦', '①-⑤,⑦'];
     $_SESSION['dni_kursowania'] = $opcje_dni[array_rand($opcje_dni)];
@@ -88,7 +112,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $_SESSION['nr_poc'] = $stary_numer > 0 ? $stary_numer + 2 : '';
             $_SESSION['nazwa_pociagu'] = $r_p['nazwa_pociagu'];
             
-            // Dekodowanie symboli
             $sym = $r_p['symbole'];
             $tablica_symboli = json_decode($sym, true);
             if (!is_array($tablica_symboli)) $tablica_symboli = explode(',', $sym);
@@ -98,7 +121,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $opcje_dni = ['①-⑤', '①-⑦', '⑥-⑦', '①-⑤,⑦'];
             $_SESSION['dni_kursowania'] = $opcje_dni[array_rand($opcje_dni)];
             
-            // Wczytywanie postojów i peronów
             $q_s = mysqli_query($conn, "SELECT * FROM szczegoly_rozkladu WHERE id_przejazdu = $id_clone ORDER BY CAST(kolejnosc AS SIGNED) ASC");
             $i = 0;
             while ($r_s = mysqli_fetch_assoc($q_s)) {
@@ -125,11 +147,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             }
             
             $wiadomosc_lokalna = "Sklonowano pociąg z bazy! Pamiętaj, aby ustawić nową godzinę odjazdu i ewentualnie poprawić daty.";
-            $czy_zmiana_trasy = true; // Zabezpieczenie przed nadpisaniem z pustego formularza
+            $czy_zmiana_trasy = true; 
         }
     }
 }
-// --- 2. LOGIKA ZMIANY TRASY "Z PALCA" ---
 elseif ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['id_trasy'])) {
     $nowe_id_trasy = $_POST['id_trasy'];
     $stare_id_trasy = $_SESSION['id_trasy'] ?? null;
@@ -151,6 +172,23 @@ elseif ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['id_trasy'])) {
 }
 
 $id_trasy = $_SESSION['id_trasy'] ?? null;
+
+// Pobieranie nazw pociągów do podpowiedzi
+$nazwy_list = [];
+$q_n = mysqli_query($conn, "SELECT nazwa FROM nazwy_pociagow ORDER BY nazwa");
+while($rn = mysqli_fetch_assoc($q_n)) { $nazwy_list[] = $rn['nazwa']; }
+
+// Pobieranie szablonów dla wybranej trasy z bazy
+$szablony_db = [];
+if ($id_trasy) {
+    $q_szab = mysqli_query($conn, "SELECT nazwa_szablonu, typy, czasy FROM szablony_postojow WHERE id_trasy = $id_trasy");
+    while($r = mysqli_fetch_assoc($q_szab)) {
+        $szablony_db[$r['nazwa_szablonu']] = [
+            'typy' => json_decode($r['typy'], true),
+            'czasy' => json_decode($r['czasy'], true)
+        ];
+    }
+}
 
 // --- 3. STANDARDOWY ZAPIS DANYCH Z FORMULARZA DO SESJI ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$czy_zmiana_trasy) {
@@ -188,7 +226,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$czy_zmiana_trasy) {
                 $global_stop_type = $_POST['global_stop_type'];
                 $global_stop_time = $_POST['global_stop_time'];
 
-                // Sprawdzamy jakiego typu to pociąg do logiki omijania PO
                 $skrot_pociagu = '';
                 if (!empty($_SESSION['id_typu_pociagu'])) {
                     $res_kat = mysqli_query($conn, "SELECT skrot FROM typy_pociagow WHERE id_typu = " . intval($_SESSION['id_typu_pociagu']));
@@ -200,7 +237,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$czy_zmiana_trasy) {
                 foreach ($stacje_list_for_action as $index => $stacja) {
                     $is_eligible = !($stacja['id_typu_stacji'] >= 3 || $index == 0 || $index == count($stacje_list_for_action) - 1);
                     
-                    // Magia dla przyspieszonych/dalekobieżnych: omijamy małe przystanki osobowe
                     if (in_array($skrot_pociagu, ['RP', 'IC', 'TLK', 'EIC', 'EIP'])) {
                         if ($stacja['id_typu_stacji'] == 2 || trim(strtolower($stacja['skrot_typu_stacji'])) == 'po') {
                             $is_eligible = false;
@@ -328,7 +364,10 @@ if (isset($wiadomosc_lokalna)) {
                 </div>
                  <div class="form-section">
                     <label>Nazwa pociągu (np. ORKAN):</label>
-                    <input type="text" name="nazwa_pociagu" value="<?= @$_SESSION['nazwa_pociagu'] ?>">
+                    <input type="text" name="nazwa_pociagu" list="lista-nazw" value="<?= @$_SESSION['nazwa_pociagu'] ?>" autocomplete="off">
+                    <datalist id="lista-nazw">
+                        <?php foreach($nazwy_list as $naz) echo "<option value=\"".htmlspecialchars($naz)."\">"; ?>
+                    </datalist>
                 </div>
                 <div class="form-section">
                     <label>Daty obowiązywania (np. 15 VI – 30 VIII 2025):</label>
@@ -373,9 +412,9 @@ if (isset($wiadomosc_lokalna)) {
             </div>
 
             <div class="set-all-container" style="margin-top: 10px; padding-top: 10px; background-color: #eef7ff; padding: 10px; border-radius: 5px;">
-                <strong>Zapisane szablony postojów (dla tej trasy):</strong>
+                <strong>Zapisane szablony postojów (z bazy danych):</strong>
                 <input type="text" id="nazwa_szablonu" placeholder="np. szybki_poznan" style="width: 150px;">
-                <button type="button" class="button action-button" onclick="zapiszSzablon()">Zapisz układ</button>
+                <button type="button" class="button action-button" onclick="zapiszSzablon()">Zapisz do bazy</button>
                 
                 <span style="margin-left: 20px;">Wczytaj:</span>
                 <select id="lista_szablonow" style="width: 150px;">
@@ -410,7 +449,6 @@ if (isset($wiadomosc_lokalna)) {
             foreach ($full_stacje_list as $index => $stacja) {
                 $id_stacji_biezacej = $stacja['id_stacji'];
 
-                // --- LOGIKA OBLICZANIA CZASU ---
                 $czas_do_dodania = $czas_przejazdu_poprzedni;
 
                 if ($poprzednia_stacja_przelot && $index > 0 && $czas_przejazdu_poprzedni > 0) { 
@@ -433,7 +471,6 @@ if (isset($wiadomosc_lokalna)) {
                 
                 $przyjazd_ts = $godzina_biezaca;
 
-                // Odczyt danych postoju z sesji
                 $postoj_data = $_SESSION['postoje'][$index] ?? [];
                 
                 $postoj_val = $postoj_data['czas'] ?? '00:00:30';
@@ -642,7 +679,6 @@ if (isset($wiadomosc_lokalna)) {
     </form>
 
     <script>
-        // Przekazanie statystyk z PHP do JavaScriptu
         const domyslneZBazy = <?= json_encode($statystyki_symboli) ?>;
 
         document.addEventListener("DOMContentLoaded", function() {
@@ -667,11 +703,9 @@ if (isset($wiadomosc_lokalna)) {
 
             let toCheck = [];
             
-            // Korzystamy ze statystyk dla wybranego ID
             if (domyslneZBazy[idTypu] && domyslneZBazy[idTypu].length > 0) {
                 toCheck = domyslneZBazy[idTypu];
             } else {
-                // Gdy brak wystarczającej bazy danych – inteligentny fallback
                 const kat = skrot.toUpperCase();
                 if (['EIP'].includes(kat)) {
                     toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'bar', 'wifi', 'wozek_rampa'];
@@ -713,17 +747,16 @@ if (isset($wiadomosc_lokalna)) {
             });
         });
 
-        // --- OBSŁUGA SZABLONÓW POSTOJÓW (W PAMIĘCI PRZEGLĄDARKI) ---
+        // --- OBSŁUGA SZABLONÓW POSTOJÓW (TERAZ Z BAZY DANYCH) ---
         const idTrasyObecnej = "<?= $id_trasy ?>";
-        const kluczSzablonow = 'szablony_rozkladow_' + idTrasyObecnej;
+        const szablonyZBazy = <?= json_encode($szablony_db) ?>;
 
         function odswiezListeSzablonow() {
             if (!idTrasyObecnej) return;
             const select = document.getElementById('lista_szablonow');
             select.innerHTML = '<option value="">-- Wybierz --</option>';
             
-            let szablony = JSON.parse(localStorage.getItem(kluczSzablonow)) || {};
-            for (let nazwa in szablony) {
+            for (let nazwa in szablonyZBazy) {
                 let opt = document.createElement('option');
                 opt.value = nazwa;
                 opt.innerText = nazwa;
@@ -735,33 +768,39 @@ if (isset($wiadomosc_lokalna)) {
             const nazwa = document.getElementById('nazwa_szablonu').value.trim();
             if (!nazwa) { alert("Wpisz najpierw nazwę szablonu!"); return; }
 
-            // Pobieramy wszystkie aktualne wybory postojów (ph, puste, itp.) z tabeli
             const typy = Array.from(document.querySelectorAll("select[name^='postoje'][name$='[typ]']")).map(el => el.value);
             const czasy = Array.from(document.querySelectorAll("input[name^='postoje'][name$='[czas]']")).map(el => el.value);
 
-            let szablony = JSON.parse(localStorage.getItem(kluczSzablonow)) || {};
-            szablony[nazwa] = { typy: typy, czasy: czasy };
-            
-            localStorage.setItem(kluczSzablonow, JSON.stringify(szablony));
-            alert("Zapisano szablon: " + nazwa);
-            document.getElementById('nazwa_szablonu').value = '';
-            odswiezListeSzablonow();
+            const fd = new FormData();
+            fd.append('ajax_action', 'save_szablon');
+            fd.append('id_trasy', idTrasyObecnej);
+            fd.append('nazwa', nazwa);
+            fd.append('typy', JSON.stringify(typy));
+            fd.append('czasy', JSON.stringify(czasy));
+
+            fetch('generator_rozkladu.php', { method: 'POST', body: fd })
+            .then(res => res.json())
+            .then(res => {
+                if(res.success) {
+                    alert("Zapisano szablon: " + nazwa + " w bazie danych!");
+                    szablonyZBazy[nazwa] = { typy: typy, czasy: czasy };
+                    document.getElementById('nazwa_szablonu').value = '';
+                    odswiezListeSzablonow();
+                }
+            });
         }
 
         function wczytajSzablon() {
             const nazwa = document.getElementById('lista_szablonow').value;
             if (!nazwa) { alert("Wybierz szablon z listy!"); return; }
 
-            let szablony = JSON.parse(localStorage.getItem(kluczSzablonow)) || {};
-            if (szablony[nazwa]) {
+            if (szablonyZBazy[nazwa]) {
                 const typyWybory = document.querySelectorAll("select[name^='postoje'][name$='[typ]']");
                 const czasyWejscia = document.querySelectorAll("input[name^='postoje'][name$='[czas]']");
 
-                // Wrzucamy dane z szablonu w pola
-                szablony[nazwa].typy.forEach((val, i) => { if(typyWybory[i]) typyWybory[i].value = val; });
-                szablony[nazwa].czasy.forEach((val, i) => { if(czasyWejscia[i]) czasyWejscia[i].value = val; });
+                szablonyZBazy[nazwa].typy.forEach((val, i) => { if(typyWybory[i]) typyWybory[i].value = val; });
+                szablonyZBazy[nazwa].czasy.forEach((val, i) => { if(czasyWejscia[i]) czasyWejscia[i].value = val; });
 
-                // Odpalamy formularz, żeby PHP od razu przeliczyło czasy przelotu
                 document.getElementById('generatorForm').submit();
             }
         }
@@ -769,15 +808,23 @@ if (isset($wiadomosc_lokalna)) {
         function usunSzablon() {
             const nazwa = document.getElementById('lista_szablonow').value;
             if (!nazwa) { alert("Wybierz szablon do usunięcia!"); return; }
-            if (confirm("Na pewno usunąć szablon: " + nazwa + "?")) {
-                let szablony = JSON.parse(localStorage.getItem(kluczSzablonow)) || {};
-                delete szablony[nazwa];
-                localStorage.setItem(kluczSzablonow, JSON.stringify(szablony));
-                odswiezListeSzablonow();
+            if (confirm("Na pewno usunąć ten szablon bezpowrotnie z bazy danych?")) {
+                const fd = new FormData();
+                fd.append('ajax_action', 'delete_szablon');
+                fd.append('id_trasy', idTrasyObecnej);
+                fd.append('nazwa', nazwa);
+
+                fetch('generator_rozkladu.php', { method: 'POST', body: fd })
+                .then(res => res.json())
+                .then(res => {
+                    if(res.success) {
+                        delete szablonyZBazy[nazwa];
+                        odswiezListeSzablonow();
+                    }
+                });
             }
         }
 
-        // Odpalamy ładowanie szablonów przy otwarciu strony
         odswiezListeSzablonow();
     </script>
 </body>

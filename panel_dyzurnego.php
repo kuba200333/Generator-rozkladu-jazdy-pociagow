@@ -5,6 +5,51 @@ require 'db_config.php';
 // Ustawienie strefy czasowej
 date_default_timezone_set('Europe/Warsaw');
 
+// --- OBSŁUGA KODÓW OPÓŹNIEŃ (AJAX) ---
+if (isset($_POST['ajax_action'])) {
+    header('Content-Type: application/json');
+    
+    // Pobieranie stacji, na których pociąg ma opóźnienie >= 3 minuty
+    if ($_POST['ajax_action'] == 'get_delays') {
+        $id_przej = (int)$_POST['id_przejazdu'];
+        $q = mysqli_query($conn, "SELECT id_szczegolu, id_stacji, przyjazd, przyjazd_rzecz, odjazd, odjazd_rzecz, kod_opoznienia, 
+            (SELECT nazwa_stacji FROM stacje WHERE id_stacji=szczegoly_rozkladu.id_stacji) as stacja 
+            FROM szczegoly_rozkladu WHERE id_przejazdu = $id_przej ORDER BY kolejnosc");
+        $data = [];
+        while($r = mysqli_fetch_assoc($q)) {
+            $delay = 0;
+            if($r['odjazd_rzecz'] && $r['odjazd']) {
+                $diff = (strtotime($r['odjazd_rzecz']) - strtotime($r['odjazd'])) / 60;
+                if($diff >= 3) $delay = $diff;
+            } elseif ($r['przyjazd_rzecz'] && $r['przyjazd']) {
+                $diff = (strtotime($r['przyjazd_rzecz']) - strtotime($r['przyjazd'])) / 60;
+                if($diff >= 3) $delay = $diff;
+            }
+            if($delay >= 3) {
+                $r['opoznienie_min'] = round($delay);
+                $data[] = $r;
+            }
+        }
+        echo json_encode($data);
+        exit;
+    }
+    
+    // Zapisywanie wybranych kodów do bazy
+    if ($_POST['ajax_action'] == 'save_delays') {
+        $codes = json_decode($_POST['codes'], true);
+        if(is_array($codes)) {
+            foreach($codes as $id_szczeg => $kod) {
+                $id = (int)$id_szczeg;
+                $k = mysqli_real_escape_string($conn, $kod);
+                mysqli_query($conn, "UPDATE szczegoly_rozkladu SET kod_opoznienia = '$k' WHERE id_szczegolu = $id");
+            }
+        }
+        echo json_encode(['success'=>true]);
+        exit;
+    }
+}
+// --- KONIEC OBSŁUGI KODÓW OPÓŹNIEŃ ---
+
 // Pobieranie listy posterunków (stacji)
 $stacje_res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje WHERE typ_stacji_id IN (1,2,3,5) ORDER BY nazwa_stacji");
 $wybrana_stacja = $_GET['id_stacji'] ?? 29;
@@ -209,6 +254,7 @@ function diffMinutesPHP($plan, $rzecz) {
     <div class="tab active" onclick="openTab('wykaz')">Wykaz pociągów</div>
     <div class="tab" onclick="openTab('opis')">Opis pociągu</div>
     <div class="tab" onclick="openTab('trasa')">Trasa pociągu</div>
+    <div class="tab"  onclick="openTab('opoznienia')">Kody opóźnień</div>
 </div>
 
 <div class="content-area">
@@ -360,6 +406,28 @@ function diffMinutesPHP($plan, $rzecz) {
             <tbody id="trasa-body"></tbody>
         </table>
     </div>
+    <div id="tab-opoznienia" class="tab-pane">
+            <div style="padding: 20px;">
+                <h3 style="margin-top:0; color: #003366;">Wprowadzanie przyczyn opóźnień (Ir-14)</h3>
+                <p style="font-size: 13px; color: #555;">System wykazuje tylko posterunki, na których pociąg posiada opóźnienie wynoszące minimum 3 minuty.</p>
+                
+                <table class="swdr-table" style="width: 100%; margin-top: 15px;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;">Posterunek / Stacja</th>
+                            <th style="width:100px;">Opóźnienie</th>
+                            <th>Wybór kodu przyczyny PLK</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lista-kodow-tbody">
+                        <tr><td colspan="3" style="text-align:center; padding: 20px;">Najpierw wybierz pociąg z Wykazu Pociągów...</td></tr>
+                    </tbody>
+                </table>
+                <div style="text-align: right; margin-top: 15px;">
+                    <button class="btn-swdr" style="background: #28a745; color: white;" onclick="zapiszKodyOpoznien()">💾 Zapisz Kody w Systemie</button>
+                </div>
+            </div>
+        </div>
 </div>
 
 <div class="bottom-bar">
@@ -614,6 +682,7 @@ function diffMinutesPHP($plan, $rzecz) {
         document.getElementById('lbl-do').innerText = tr.dataset.do || '---';
 
         pobierzDaneTrasy(idPrzejazdu);
+        ladujKodyOpoznien(idPrzejazdu);
     }
 
    function pobierzDaneTrasy(idPrzejazdu) {
@@ -1449,6 +1518,74 @@ function diffMinutesPHP($plan, $rzecz) {
         }
         // Otwiera nową kartę z gotową tablicą do druku
         window.open('drukuj_tablice.php?id_przejazdu=' + currentPrzejazdId, '_blank');
+    }
+    // --- SŁOWNIK KODÓW OPÓŹNIEŃ PLK (Ir-14) ---
+    const PLK_KODY = {
+        "11": "11 - Wypadek / Kolizja",
+        "13": "13 - Wypadek z człowiekiem / Samobójstwo",
+        "34": "34 - Zbyt późne zgłoszenie gotowości pociągu do odjazdu",
+        "40": "40 - Opóźnienie wtórne (krzyżowanie / wyprzedzanie)",
+        "61": "61 - Usterka taboru (lokomotywy / EZT)",
+        "63": "63 - Usterka wagonów",
+        "64": "64 - Brak sprawnych hamulców / Oględziny",
+        "82": "82 - Usterka urządzeń SRK",
+        "83": "83 - Usterka sieci trakcyjnej",
+        "86": "86 - Usterka toru / Pęknięcie szyny",
+        "90": "90 - Brak maszynisty / drużyny",
+        "94": "94 - Oczekiwanie na skomunikowanie"
+    };
+
+    function ladujKodyOpoznien(id_przejazdu) {
+        const fd = new FormData();
+        fd.append('ajax_action', 'get_delays');
+        fd.append('id_przejazdu', id_przejazdu);
+        
+        fetch('panel_dyzurnego.php', { method: 'POST', body: fd })
+        .then(res => res.json())
+        .then(data => {
+            let html = '';
+            if(data.length === 0) {
+                html = '<tr><td colspan="3" style="text-align:center; padding:20px; color:#555;">Pociąg jedzie planowo. Brak opóźnień do zakodowania.</td></tr>';
+            } else {
+                data.forEach(row => {
+                    let select = '<select class="delay-select" data-id="'+row.id_szczegolu+'" style="padding: 4px; width: 100%; border-radius: 3px;"><option value="">-- Wybierz kod Ir-14 --</option>';
+                    for(let k in PLK_KODY) {
+                        let sel = (row.kod_opoznienia == k) ? 'selected' : '';
+                        select += `<option value="${k}" ${sel}>${PLK_KODY[k]}</option>`;
+                    }
+                    select += '</select>';
+                    
+                    html += `<tr>
+                        <td style="font-weight:bold; text-align:left;">${row.stacja}</td>
+                        <td style="color:red; font-weight:bold; font-size:14px;">+${row.opoznienie_min} min</td>
+                        <td>${select}</td>
+                    </tr>`;
+                });
+            }
+            document.getElementById('lista-kodow-tbody').innerHTML = html;
+        });
+    }
+    
+    function zapiszKodyOpoznien() {
+        if(!currentPrzejazdId) return;
+        
+        let selects = document.querySelectorAll('.delay-select');
+        let data = {};
+        selects.forEach(s => {
+            if(s.value !== '') data[s.getAttribute('data-id')] = s.value;
+        });
+        
+        const fd = new FormData();
+        fd.append('ajax_action', 'save_delays');
+        fd.append('codes', JSON.stringify(data));
+        
+        fetch('panel_dyzurnego.php', { method: 'POST', body: fd })
+        .then(res => res.json())
+        .then(res => {
+            if(res.success) {
+                alert("Kody opóźnień zostały poprawnie zapisane w bazie danych!");
+            }
+        });
     }
 </script>
 </body>

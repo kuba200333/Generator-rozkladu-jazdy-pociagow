@@ -166,6 +166,7 @@
             <ul class="menu-list">
                 <li><a href="zarzadzaj_stacjami.php"><span class="icon">🚉</span> Baza Stacji</a></li>
                 <li><a href="kreator_tras.php"><span class="icon">🗺️</span> Baza Tras</a></li>
+                <li><a href="zarzadzanie_szablonami.php"><span class="icon">🏷️</span> Słowniki i Szablony</a></li>
                 <li><a href="zarzadzaj_odcinkami.php"><span class="icon">📏</span> Odcinki i Prędkości</a></li>
                 <li><a href="zarzadzaj_ostrzezeniami.php"><span class="icon">⚠️</span> Ostrzeżenia (Rozkazy O)</a></li>
             </ul>

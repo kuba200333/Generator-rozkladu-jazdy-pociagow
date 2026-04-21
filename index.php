@@ -158,6 +158,7 @@
                 <li><a href="podglad_maszynisty.php"><span class="icon">📄</span> Podgląd Maszynisty (SKR)</a></li>
                 <li><a href="przegladarka_rozkladow.php"><span class="icon">📋</span> Plakaty Stacyjne</a></li>
                 <li><a href="wyswietlacz_led.php"><span class="icon">🟧</span> Wyświetlacz LED (Pociąg)</a></li>
+                <li><a href="radar_pociagu.php"><span class="icon">📡</span> Radar na żywo</a></li>
             </ul>
         </div>
 

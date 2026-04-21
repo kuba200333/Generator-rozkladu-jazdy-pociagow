@@ -435,6 +435,7 @@ function diffMinutesPHP($plan, $rzecz) {
     <div class="btn-swdr" onclick="openAnnounceModal()"><span>📢</span> Zapowiedź</div>
     <div class="btn-swdr" onclick="openWyswietlaczModal()" style="background: #e0f2fe; border-color: #0284c7;"><span>🖥️</span> Wyświetl na peronie</div>
     <a href="panel_tablic.php?id_stacji=<?= $wybrana_stacja ?>" target="_blank" class="btn-swdr" style="margin-left:auto;"><span>👁️</span> Podgląd wszystkich tablic</a>
+    <a href="index.php" class="btn-swdr" style="background: #f8d7da; border-color: #dc3545;"><span>🏠</span> Menu główne</a>
     <span style="font-size:10px; color:#555; margin-left:10px;">Ilość pociągów -> <?= count($pociagi) ?></span>
 </div>
 
@@ -709,6 +710,8 @@ function diffMinutesPHP($plan, $rzecz) {
 
                 if (data.trasa) {
                     data.trasa.forEach((t, i) => {
+                        if (t.czy_odwolany == 1 || t.czy_odwolany === "1") return; // Ta linijka ukrywa odwołane stacje
+                        
                         let delayP = '', styleP = 'bg-blue t-cell', classDiffP = '';
                         let delayO = '', styleO = 'bg-blue t-cell', classDiffO = '';
                         let displayP = '';

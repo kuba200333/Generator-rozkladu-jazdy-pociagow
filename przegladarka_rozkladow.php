@@ -1,527 +1,498 @@
 <?php
 require 'db_config.php';
+
 $id_stacji_wybranej = isset($_GET['id_stacji']) ? (int)$_GET['id_stacji'] : null;
+$typ_plakatu = isset($_GET['typ_plakatu']) ? $_GET['typ_plakatu'] : 'odjazdy';
 
-// Rozszerzona definicja symboli do legendy
-$legend_symbols = [
-    'klasa_1' => '1 klasa',
-    'klasa_2' => '2 klasa',
-    'rezerwacja' => 'Rezerwacja obowiązkowa',
-    'rower' => 'wagon przystosowany do przewozu rowerów',
-    'kuszetka' => 'kuszetka',
-    'sypialny' => 'wagon sypialny',
-    'bar' => 'wagon barowy / mini-bar',
-    'restauracyjny' => 'wagon restauracyjny',
-    'wozek_rampa' => 'wagon z miejscami dla osób na wózkach - z windą/rampa',
-    'wozek_bez_rampy' => 'wagon z miejscami dla osób na wózkach - bez windy/rampy',
-    'klima' => 'klimatyzacja',
-    'wifi' => 'dostęp do WiFi',
-    'przewijak' => 'dostępne miejsce do przewijania dziecka',
-    'duzy_bagaz' => 'miejsce na duży bagaż'
-];
+function format_days($days_str) {
+    if (empty($days_str)) return '';
+    return htmlspecialchars($days_str);
+}
 
-function render_symbols($symbols_str, $map) {
-    if (empty($symbols_str)) {
-        return '';
+// Pobieranie przewoźników i typów pociągów do dynamicznej legendy
+$przewoznicy_baza = [];
+$typy_baza = [];
+if (isset($conn)) {
+    $res_przew = mysqli_query($conn, "SELECT skrot, pelna_nazwa FROM przewoznicy");
+    while ($row_przew = mysqli_fetch_assoc($res_przew)) {
+        $przewoznicy_baza[$row_przew['skrot']] = $row_przew['pelna_nazwa'];
     }
     
-    $symbols_map_chars = [
-        'klasa_1' => '1', 'klasa_2' => '2', 'rezerwacja' => '®', 'rower' => '🚲',
-        'kuszetka' => '⌶', 'sypialny' => '🛏️', 'bar' => '🍸', 'restauracyjny' => '🍴',
-        'wozek_rampa' => '♿', 'wozek_bez_rampy' => '♿', 'klima' => '❄️', 'wifi' => '📶',
-        'przewijak' => '🚼', 'duzy_bagaz' => '🧳'
-    ];
-    
-    $html = "<div class='symbols'>";
+    $res_typy = mysqli_query($conn, "SELECT skrot, pelna_nazwa FROM typy_pociagow");
+    while ($row_typy = mysqli_fetch_assoc($res_typy)) {
+        $typy_baza[$row_typy['skrot']] = $row_typy['pelna_nazwa'];
+    }
+}
+
+// Definicje symboli
+$symbol_definitions = [
+    'klasa_1' => ['1️⃣', '1 klasa / First class seats / 1 клас'],
+    'klasa_2' => ['2️⃣', '2 klasa / Second class seats / 2 клас'],
+    'rezerwacja' => ['R', 'rezerwacja obowiązkowa / seat reservation required / бронювання обов\'язкове'],
+    'rower' => ['🚲', 'wagon przystosowany do przewozu rowerów / wagon adopted to the transport of bicycles / вагон призначений для перевезення велосипедів'],
+    'kuszetka' => ['⌶', 'wagon z miejscami do leżenia / couchette car / купейний вагон'],
+    'sypialny' => ['🛏️', 'wagon sypialny / sleeping car / спальний вагон'],
+    'bar' => ['🍸', 'wagon barowy / mini-bar / вагон-бар'],
+    'restauracyjny' => ['🍴', 'wagon restauracyjny / dining car / вагон-ресторан'],
+    'wozek_rampa' => ['♿', 'wagon z miejscami dla osób na wózkach ze windą/rampą / car with seats for disabled passengers with a lift/ramp / вагон з місцями для інвалідних візків з ліфтом/пандусом'],
+    'wozek_bez_rampy' => ['♿🚫', 'wagon z miejscami dla osób na wózkach bez windy/rampy / wagon with places for people moving on wheelchairs without the elevator/platform / вагон з місцями для пасажирів на інвалідних візках без ліфта/пандуса'],
+    'klima' => ['❄️', 'klimatyzacja / air conditioning / кондиціонер'],
+    'wifi' => ['📶', 'dostęp do WiFi / WiFi access / доступ до WiFi'],
+    'przewijak' => ['🚼', 'dostępne miejsce do przewijania dziecka / baby changing space available / доступне місце для сповивання дитини'],
+    'duzy_bagaz' => ['🧳', 'miejsce na duży bagaż / space for large luggage / місце для великого багажу'],
+    'kalendarz' => ['📅', 'terminy kursowania / days of operation / періодичність руху'],
+    'oprocze' => ['⍉', 'oprócz / except / окрім'],
+    'oraz' => ['⊕', 'oraz / and also / i'],
+    'dzien_1' => ['①', 'w poniedziałki / Mondays / по понеділках'],
+    'dzien_2' => ['②', 'we wtorki / Tuesdays / по вівторках'],
+    'dzien_3' => ['③', 'w środy / Wednesdays / по середах'],
+    'dzien_4' => ['④', 'w czwartki / Thursdays / по четвергах'],
+    'dzien_5' => ['⑤', 'w piątki / Fridays / по п\'ятницях'],
+    'dzien_6' => ['⑥', 'w soboty / Saturdays / по суботах'],
+    'dzien_7' => ['⑦', 'w niedziele / Sundays / по неділях']
+];
+
+function render_symbols($symbols_str, $definitions) {
+    if (empty($symbols_str)) return '';
+    $html = "<div class='symbols' style='margin-top: 4px;'>";
     $symbols_arr = explode(',', $symbols_str);
     foreach ($symbols_arr as $symbol_key) {
-        if (isset($symbols_map_chars[$symbol_key])) {
-            $html .= "<span title='" . htmlspecialchars($map[$symbol_key]) . "'>{$symbols_map_chars[$symbol_key]}</span> ";
+        $symbol_key = trim($symbol_key);
+        if (isset($definitions[$symbol_key])) {
+            $icon = $definitions[$symbol_key][0];
+            $html .= "<span style='margin-right: 4px; font-size: 1.05em; color: #111;'>{$icon}</span>";
         }
     }
     $html .= "</div>";
     return $html;
 }
 
-function format_days($days_str) {
-    if (empty($days_str)) return '';
-    // This function can be expanded based on actual data format for days
-    return htmlspecialchars($days_str);
+if ($typ_plakatu === 'przyjazdy') {
+    $title_main = 'Przyjazdy <span style="font-weight: normal; font-size: 0.6em; font-style: italic;">/ Arrivals / Прибуття</span>';
+    $col_1_title = "godzina<br>przyjazdu<br><span style='font-weight:normal; font-size:0.7em; font-style: italic;'>arrival time</span>";
+    $col_4_title = "godziny odjazdów ze stacji pośrednich<br><br><span style='font-weight:normal; font-size:0.7em; font-style: italic;'>departures from intermediate stops</span>";
+} else {
+    $title_main = 'Odjazdy <span style="font-weight: normal; font-size: 0.6em; font-style: italic;">/ Departures / Відправлення</span>';
+    $col_1_title = "godzina<br>odjazdu<br><span style='font-weight:normal; font-size:0.7em; font-style: italic;'>departure time</span>";
+    $col_4_title = "godziny przyjazdów do stacji pośrednich<br><br><span style='font-weight:normal; font-size:0.7em; font-style: italic;'>arrivals at intermediate stops</span>";
+    $col_5_title = "godzina przyjazdu do<br>stacji docelowej<br><span style='font-weight:normal; font-size:0.7em; font-style: italic;'>arrival at destination (station)</span>";
 }
 ?>
 <!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Plakatowy Rozkład Jazdy</title>
+    <title>Rozkład Jazdy</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Arial+Narrow:wght@400;700&family=Arial:wght@400;700&display=swap');
+        body { font-family: 'Arial', sans-serif; background-color: #e0e0e0; margin: 0; padding: 0; }
         
-        body { 
-            font-family: 'Arial Narrow', Arial, sans-serif; 
-            background-color: #f0f0f0; 
-            margin: 0; 
-            padding: 0;
-        }
-        .container { 
-            max-width: 1800px; 
-            margin: 20px auto; 
-        }
-        .poster { 
-            background-color: #FFFF00; /* Main yellow background */
-            color: black; 
-            padding: 15px; 
-            border: 3px solid black; 
-        }
-        .poster-header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: flex-start; 
-            border-bottom: 3px solid black; 
-            padding-bottom: 10px; 
-            margin-bottom: 10px;
-        }
-        .poster-header .title-block { 
-            flex-grow: 1; 
-        }
-        .poster-header .title-block .title { 
-            font-size: 2.5em; 
-            font-weight: 700; 
-            line-height: 1;
-            letter-spacing: -1px;
-        }
-        .poster-header .title-block .station-name { 
-            font-size: 6.5em; 
-            font-weight: 700; 
-            line-height: 1.1; 
-            margin-top: 5px;
-            text-transform: uppercase;
-        }
-        .poster-header .qr-code { 
-            margin: 0 20px; 
-        }
-        .poster-header .qr-code img { 
-            width: 110px; 
-            height: 110px; 
-            border: 2px solid black; 
-        }
-        .poster-header .details { 
-            text-align: right; 
-            font-size: 1.2em; 
-            font-weight: bold;
-        }
-        .poster-header .details .company {
-            font-size: 1.3em;
-        }
-        .poster-header .details .validity { 
-            color: black; 
-            font-size: 1.6em; 
-            font-weight: 700; 
-            border: 4px solid black; 
-            padding: 5px 10px; 
-            display: inline-block; 
-            margin: 10px 0;
-            background-color: white;
-        }
-        .poster-header .details .update-date {
-            font-size: 1.1em;
-        }
-        .main-table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-top: 5px; 
-        }
+        body.is-odjazdy { background-color: #FFF200; color: black; }
+        body.is-przyjazdy { background-color: #FFFFFF; color: black; }
+
+        .container { max-width: 1400px; margin: 20px auto; background: inherit; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .poster { padding: 20px 30px; }
+
+        .poster-header { display: flex; justify-content: space-between; align-items: stretch; border-bottom: 4px solid black; padding-bottom: 15px; margin-bottom: 5px; }
+        .title-block { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
+        .title-block .top-row { display: flex; align-items: center; gap: 15px; }
+        .title-block .icon { background: black; border-radius: 4px; padding: 5px; display: inline-flex; }
+        .title-block .title { font-size: 2.5em; font-weight: 900; margin: 0; letter-spacing: -1px; }
+        .title-block .station-name { font-size: 4.5em; font-weight: 900; line-height: 1; margin-top: 5px; }
+        
+        .header-right { display: flex; align-items: center; gap: 20px; text-align: right; }
+        .qr-code img { width: 90px; height: 90px; border: 2px solid black; }
+        .details { display: flex; flex-direction: column; justify-content: space-between; height: 100%; }
+        .details .pkp-logo { font-size: 0.85em; font-weight: bold; color: #111; letter-spacing: 0.5px; }
+        .details .validity { color: #d00; font-size: 2.8em; font-weight: 900; letter-spacing: -1px; margin: auto 0; line-height: 1; }
+        .details .update { font-size: 0.8em; font-weight: bold; }
+
+        /* Tabela Główna */
+        .main-table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 2px solid black; }
+        
         .main-table th { 
-            border-bottom: 3px solid black; 
-            text-align: left; 
-            padding: 8px 5px; 
-            font-size: 1.2em;
-            font-weight: bold;
+            border: 1px solid black; 
+            border-top: 2px solid black; 
+            border-bottom: 2px solid black; 
+            text-align: center; 
+            padding: 5px 3px; 
+            font-size: 0.85em; 
+            font-weight: bold; 
+            line-height: 1.1; 
             vertical-align: bottom; 
         }
-        .main-table td {
-            border-bottom: 1px solid #A0A0A0;
-            padding: 8px 5px;
-            vertical-align: top;
-        }
-        .main-table tbody tr:last-child td {
-             border-bottom: none;
+
+        .main-table td { 
+            border-top: 1px solid black;
+            border-bottom: 1px solid black; 
+            /* ZERO pionowych linii w danych */
+            border-left: none !important; 
+            border-right: none !important; 
+            padding: 6px 5px; 
+            vertical-align: top; 
         }
 
-        .col-time { 
-            width: 7%; 
-            font-size: 2.8em; 
-            font-weight: 700; 
-            text-align: center; 
-        }
-        .col-platform { 
-            width: 5%; 
-            font-size: 1.4em;
-            text-align: center; 
-            line-height: 1.2;
-        }
-        .col-platform .platform-label, .col-platform .track-label {
-            font-size: 0.9em;
-            font-weight: bold;
-        }
-        .col-platform .platform-num {
-            font-size: 2.2em;
-            font-weight: 700;
-        }
-        .col-platform .track-num {
-            font-size: 1.8em;
-            font-weight: normal;
-        }
-        .col-train { 
-            width: 20%;
-            font-size: 1.3em;
-            line-height: 1.4;
-        }
-        .col-train .train-cat-num { 
-            font-weight: 700; 
-        }
-        .col-train .train-name { 
-            font-weight: 700; 
-        }
-        .col-train .symbols { 
-            font-size: 1em; 
-            margin-top: 4px; 
-            word-spacing: 3px; 
-        }
-        .col-train .remarks-details {
-            font-size: 0.9em;
-            font-weight: bold;
-        }
-        .col-destination { 
-            width: 53%; 
-            font-size: 1.25em; 
-            line-height: 1.5; 
-            word-spacing: 0.1em;
-        }
-        .col-destination-final { 
-            width: 15%; 
-            font-size: 1.6em; 
-            font-weight: 700; 
-            text-align: left; 
-            vertical-align: top;
-        }
-        .col-destination-final .arrival-time {
-            font-size: 1.3em;
-            margin-top: 5px;
-        }
-        
-        .form-container { 
-            background-color: #e9ecef; 
-            padding: 15px; 
-            border: 1px solid #ccc; 
-            margin-bottom: 20px; 
-            text-align: center; 
-        }
-        a { 
-            color: #007bff; 
-            text-decoration: none; 
-        }
-        .train-red td, .train-red td div { 
-            color: red !important; 
+        body.is-przyjazdy .main-table tr:nth-child(even) td { background-color: #f6f6f6; }
+
+        /* Zdecydowane wyszarzenie tylko dla godziny i peronu/toru (w tym nagłówków) */
+        .main-table th.th-time,
+        .main-table td.td-time,
+        .main-table th.th-platform,
+        .main-table td.td-platform { 
+            background-color: rgba(0, 0, 0, 0.09) !important; 
         }
 
-        .legend-container {
-            margin-top: 25px;
-            border-top: 3px solid black;
-            padding-top: 10px;
-            display: grid; /* Używamy siatki do stworzenia 3 kolumn */
-            grid-template-columns: repeat(3, 1fr); /* 3 równe kolumny */
-            gap: 0 25px; /* Odstęp tylko między kolumnami */
-            text-align: left;
-        }
-        .legend-column h4 {
-            font-family: 'Arial', sans-serif;
-            text-transform: uppercase;
-            font-size: 1.2em;
-            margin-top: 0;
-            margin-bottom: 15px;
-            border-bottom: 1px solid black;
-            padding-bottom: 5px;
-        }
-        .legend-item {
-            display: flex;
-            align-items: flex-start; /* Lepsze wyrównanie dla długich opisów */
-            margin-bottom: 8px;
-            font-size: 0.9em;
-            line-height: 1.3;
-        }
-        .legend-item .symbol {
-            font-weight: bold;
-            font-family: 'Courier New', Courier, monospace; /* Lepsza czytelność znaków specjalnych */
-            font-size: 1.1em;
-            width: 30px;
-            text-align: center;
-            flex-shrink: 0;
-            margin-right: 10px;
-        }
-        .legend-abbreviation .abbr {
-            font-weight: bold;
-            width: 50px;
-            flex-shrink: 0;
-        }
-        .legend-abbreviation .full-name {
-            padding-left: 8px;
+        /* Szerokości kolumn w procentach */
+        .th-time { width: 9%; }
+        .th-platform { width: 6%; }
+        .th-train { width: 14%; }
+        .th-dest { width: 56%; }
+        .th-final { width: 15%; }
+
+        /* Komórki z danymi */
+        .td-time { font-size: 2.3em; font-weight: 900; text-align: center; letter-spacing: -1px; }
+        .td-platform { text-align: center; }
+        .td-train { font-size: 0.85em; text-align: center; line-height: 1.2; }
+        .td-destination { font-size: 0.9em; line-height: 1.35; padding: 6px 12px !important; text-align: left; }
+        .td-final { font-size: 1.05em; text-align: right; font-weight: bold; padding-right: 10px !important; }
+
+        .td-platform .platform-val { font-size: 1.5em; font-weight: 900; line-height: 1; }
+        .td-platform .track-val { font-size: 1.1em; line-height: 1; margin-top: 4px; }
+        .td-train .train-cat { font-weight: bold; font-size: 1.15em; }
+        .td-train .train-name { font-style: italic; font-weight: bold; margin-top: 2px; }
+        .td-final .final-time { font-size: 1.4em; margin-top: 4px; }
+
+        .dates-row { font-size: 0.9em; margin-top: 8px; display: flex; align-items: flex-start; gap: 5px; }
+
+        .legend-container { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; font-size: 0.85em; border-top: 3px solid black; padding-top: 15px; }
+        .legend-column h4 { background-color: black; color: white; padding: 4px 5px; font-size: 1.1em; margin: 0 0 10px 0; text-align: center; }
+        .legend-item { display: flex; align-items: flex-start; margin-bottom: 6px; line-height: 1.2; word-wrap: break-word; }
+        .legend-item .symbol { font-weight: bold; width: 30px; flex-shrink: 0; text-align: center; margin-right: 5px; }
+
+        .ui-bar { background: #343a40; color: white; padding: 15px; display: flex; justify-content: center; gap: 20px; align-items: center; }
+        .ui-bar select, .ui-bar button { padding: 8px 12px; font-size: 1em; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; }
+        .ui-bar button { background: #28a745; color: white; border: none; font-weight: bold; }
+        .ui-bar a { color: #17a2b8; text-decoration: none; font-weight: bold; }
+
+        @media print {
+            @page { size: A4 portrait; margin: 0; }
+            html, body { width: 100%; min-height: 100%; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; font-size: 11px !important; }
+            .ui-bar { display: none !important; }
+            .container { box-shadow: none; width: 100%; max-width: 100%; margin: 0; padding: 0; }
+            .poster { padding: 10mm 15mm !important; box-sizing: border-box; min-height: 100vh; border: none !important; }
+            
+            .td-time { font-size: 2.2em !important; }
+            .td-platform .platform-val { font-size: 1.4em !important; }
+            .td-destination { font-size: 0.85em !important; padding: 6px 8px !important; }
+            
+            .main-table { border: 2px solid black !important; }
+            .main-table th { border: 1px solid black !important; border-top: 2px solid black !important; border-bottom: 2px solid black !important; font-size: 0.75em !important; padding: 3px 1px !important; word-wrap: break-word; }
+            .main-table td { border-top: 1px solid black !important; border-bottom: 1px solid black !important; border-left: none !important; border-right: none !important; }
+            
+            .legend-column h4 { background-color: black !important; color: white !important; }
+            .legend-container { break-before: page; page-break-before: always; margin-top: 0; padding-top: 15mm; border-top: none; }
         }
     </style>
 </head>
-<body>
-<div class="container">
-    <a href="index.php">Powrót do menu</a><br><br>
-    <div class="form-container">
-        <form method="GET" action="">
-            <label for="id_stacji"><strong>Wybierz stację, dla której chcesz wygenerować plakat:</strong></label>
-            <select name="id_stacji" id="id_stacji" onchange="this.form.submit()">
-                <option value="">-- Wybierz stację --</option>
-                <?php
-                if (isset($conn)) {
-                    $res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje ORDER BY nazwa_stacji");
-                    while ($row = mysqli_fetch_assoc($res)) {
-                        $selected = ($id_stacji_wybranej == $row['id_stacji']) ? "selected" : "";
-                        echo "<option value='{$row['id_stacji']}' {$selected}>{$row['nazwa_stacji']}</option>";
-                    }
-                }
-                ?>
-            </select>
-        </form>
-    </div>
+<body class="<?= $typ_plakatu === 'odjazdy' ? 'is-odjazdy' : 'is-przyjazdy' ?>">
 
+<div class="ui-bar">
+    <a href="index.php">⬅ Powrót</a>
+    <form method="GET" action="" id="control-form" style="margin: 0; display: flex; gap: 15px; align-items: center;">
+        <label for="id_stacji">Stacja:</label>
+        <select name="id_stacji" id="id_stacji" onchange="this.form.submit()">
+            <option value="">-- Wybierz stację --</option>
+            <?php
+            if (isset($conn)) {
+                $res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje ORDER BY nazwa_stacji");
+                while ($row = mysqli_fetch_assoc($res)) {
+                    $selected = ($id_stacji_wybranej == $row['id_stacji']) ? "selected" : "";
+                    echo "<option value='{$row['id_stacji']}' {$selected}>{$row['nazwa_stacji']}</option>";
+                }
+            }
+            ?>
+        </select>
+        
+        <label for="typ_plakatu">Rozkład:</label>
+        <select name="typ_plakatu" id="typ_plakatu" onchange="this.form.submit()">
+            <option value="odjazdy" <?= $typ_plakatu === 'odjazdy' ? 'selected' : '' ?>>Odjazdy</option>
+            <option value="przyjazdy" <?= $typ_plakatu === 'przyjazdy' ? 'selected' : '' ?>>Przyjazdy</option>
+        </select>
+    </form>
+    <button type="button" onclick="window.print()">🖨️ Drukuj Plakat</button>
+</div>
+
+<div class="container">
     <?php if ($id_stacji_wybranej && isset($conn)): ?>
         <?php
         $stacja_info_res = mysqli_query($conn, "SELECT nazwa_stacji FROM stacje WHERE id_stacji = $id_stacji_wybranej");
         $stacja_info = mysqli_fetch_assoc($stacja_info_res);
-        $daty_kursowania_plakatu = "15 VI - 30 VIII 2025";
-        $current_date_for_update = date('d.m.Y'); // Format date as seen in PDF
+        $daty_kursowania_plakatu = "8 III – 13 VI 2026";
+        $current_date_for_update = date('d.m.Y');
+
+        $uzyci_przewoznicy = [];
+        $uzyte_typy_pociagow = [];
+        $uzyte_symbole = [];
         ?>
+        
         <div class="poster">
             <div class="poster-header">
                 <div class="title-block">
-                    <div class="title">Odjazdy / Departures / Відправлення</div>
+                    <div class="top-row">
+                        <div class="icon">
+                            <svg width="45" height="45" viewBox="0 0 24 24" fill="white"><path d="M12 2C8 2 4 2.5 4 6v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2.23l2-2H14l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zm0 2c3.51 0 6 .43 6 2v5H6V6c0-1.57 2.49-2 6-2zm-2.5 13c-.83 0-1.5-.67-1.5-1.5S8.67 14 9.5 14s1.5.67 1.5 1.5S10.33 17 9.5 17zm5 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+                        </div>
+                        <div class="title"><?= $title_main ?></div>
+                    </div>
                     <div class="station-name"><?= htmlspecialchars($stacja_info['nazwa_stacji']) ?></div>
                 </div>
-                <div class="qr-code">
-                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://portalpasazera.pl" alt="QR Code">
-                </div>
-                <div class="details">
-                    <div class="company">PKP POLSKIE LINIE KOLEJOWE S.A.</div>
-                    <div class="validity">Ważny: <?= $daty_kursowania_plakatu ?></div>
-                    <div class="update-date">Aktualizacja wg stanu na <?= $current_date_for_update ?></div>
+                
+                <div class="header-right">
+                    <div class="qr-code">
+                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://portalpasazera.pl" alt="QR">
+                    </div>
+                    <div class="details">
+                        <div class="pkp-logo">PKP POLSKIE LINIE KOLEJOWE S.A.</div>
+                        <div class="validity"><?= $daty_kursowania_plakatu ?></div>
+                        <div class="update">Aktualizacja wg stanu na <?= $current_date_for_update ?></div>
+                    </div>
                 </div>
             </div>
             
             <table class="main-table">
                 <thead>
                     <tr>
-                        <th style="text-align:center;">godzina<br>odjazdu<br><small>departure</small></th>
-                        <th style="text-align:center;">peron<br>tor<br><small>platform / track</small></th>
-                        <th>pociąg<br><small>train</small></th>
-                        <th>godziny przyjazdów do stacji pośrednich<br><small>arrivals at intermediate stops</small></th>
-                        <th>godzina przyjazdu do<br>stacji docelowej<br><small>arrival at destination</small></th>
+                        <th class="th-time"><?= $col_1_title ?></th>
+                        <th class="th-platform"><?= $col_1_title == 'godzina<br>odjazdu' ? 'peron<br>tor' : 'peron<br>tor' ?><br><span style='font-weight:normal; font-size:0.7em;'>platform<br>track</span></th>
+                        <th class="th-train">pociąg<br><br><span style='font-weight:normal; font-size:0.7em;'>train</span></th>
+                        <th class="th-dest"><?= $col_4_title ?></th>
+                        <?php if ($typ_plakatu === 'odjazdy'): ?>
+                            <th class="th-final"><?= $col_5_title ?></th>
+                        <?php endif; ?>
                     </tr>
                 </thead>
                 <tbody>
                     <?php
-                    $sql_odjazdy = "SELECT sr.*, p.*, t.id_stacji_koncowej, st_konc.nazwa_stacji AS stacja_koncowa,
-                                    tp.skrot as typ_skrot, tp.pelna_nazwa as typ_nazwa,
-                                    przew.skrot as przewoznik_skrot, kolor_czcionki
-                                    FROM szczegoly_rozkladu sr 
-                                    JOIN przejazdy p ON sr.id_przejazdu = p.id_przejazdu 
-                                    JOIN trasy t ON p.id_trasy = t.id_trasy 
-                                    JOIN stacje st_konc ON t.id_stacji_koncowej = st_konc.id_stacji
-                                    LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu
-                                    LEFT JOIN przewoznicy przew ON tp.id_przewoznika = przew.id_przewoznika
-                                    WHERE sr.id_stacji = ? AND sr.odjazd IS NOT NULL AND (sr.uwagi_postoju = 'ph' OR sr.przyjazd IS NULL)
-                                    ORDER BY sr.odjazd ASC";
+                    if ($typ_plakatu === 'odjazdy') {
+                        $sql = "SELECT sr.*, p.*, t.id_stacji_koncowej AS stacja_docelowa_id, st_konc.nazwa_stacji AS stacja_docelowa_nazwa,
+                                tp.skrot as typ_skrot, przew.skrot as przewoznik_skrot, kolor_czcionki
+                                FROM szczegoly_rozkladu sr 
+                                JOIN przejazdy p ON sr.id_przejazdu = p.id_przejazdu 
+                                JOIN trasy t ON p.id_trasy = t.id_trasy 
+                                JOIN stacje st_konc ON t.id_stacji_koncowej = st_konc.id_stacji
+                                LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu
+                                LEFT JOIN przewoznicy przew ON tp.id_przewoznika = przew.id_przewoznika
+                                WHERE sr.id_stacji = ? AND sr.odjazd IS NOT NULL AND (sr.uwagi_postoju = 'ph' OR sr.przyjazd IS NULL)
+                                ORDER BY sr.odjazd ASC";
+                    } else {
+                        $sql = "SELECT sr.*, p.*, t.id_stacji_poczatkowej AS stacja_docelowa_id, st_pocz.nazwa_stacji AS stacja_docelowa_nazwa,
+                                tp.skrot as typ_skrot, przew.skrot as przewoznik_skrot, kolor_czcionki
+                                FROM szczegoly_rozkladu sr 
+                                JOIN przejazdy p ON sr.id_przejazdu = p.id_przejazdu 
+                                JOIN trasy t ON p.id_trasy = t.id_trasy 
+                                JOIN stacje st_pocz ON t.id_stacji_poczatkowej = st_pocz.id_stacji
+                                LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu
+                                LEFT JOIN przewoznicy przew ON tp.id_przewoznika = przew.id_przewoznika
+                                WHERE sr.id_stacji = ? AND sr.przyjazd IS NOT NULL AND (sr.uwagi_postoju = 'ph' OR sr.odjazd IS NULL)
+                                ORDER BY sr.przyjazd ASC";
+                    }
                     
-                    $stmt_odjazdy = mysqli_prepare($conn, $sql_odjazdy);
-                    mysqli_stmt_bind_param($stmt_odjazdy, "i", $id_stacji_wybranej);
-                    mysqli_stmt_execute($stmt_odjazdy);
-                    $result_odjazdy = mysqli_stmt_get_result($stmt_odjazdy);
+                    $stmt = mysqli_prepare($conn, $sql);
+                    mysqli_stmt_bind_param($stmt, "i", $id_stacji_wybranej);
+                    mysqli_stmt_execute($stmt);
+                    $result = mysqli_stmt_get_result($stmt);
 
-                    if (mysqli_num_rows($result_odjazdy) > 0) {
-                        while ($row = mysqli_fetch_assoc($result_odjazdy)) {
-                            $font_class = strtolower($row['kolor_czcionki']) == 'red' ? 'train-red' : '';
+                    if (mysqli_num_rows($result) > 0) {
+                        while ($row = mysqli_fetch_assoc($result)) {
+                            if (!empty($row['przewoznik_skrot'])) {
+                                $uzyci_przewoznicy[$row['przewoznik_skrot']] = $przewoznicy_baza[$row['przewoznik_skrot']] ?? '';
+                            }
+                            if (!empty($row['typ_skrot'])) {
+                                $uzyte_typy_pociagow[$row['typ_skrot']] = $typy_baza[$row['typ_skrot']] ?? '';
+                            }
                             
-                            echo "<tr class='train-entry-main {$font_class}'>";
-                            echo "<td class='col-time'>" . date("H:i", strtotime($row['odjazd'])) . "</td>";
-                            // MODIFICATION: Show '-' if platform or track is empty
-                            echo "<td class='col-platform'>
-                                    <div>
-                                        <span class='platform-label'> </span> 
-                                        <span class='platform-num'>" . (!empty($row['peron']) ? htmlspecialchars($row['peron']) : '') . "</span>
-                                    </div>
-                                    <div>
-                                        <span class='track-label'> </span> 
-                                        <span class='track-num'>" . (!empty($row['tor']) ? htmlspecialchars($row['tor']) : '') . "</span>
-                                    </div>
+                            if (!empty($row['symbole'])) {
+                                foreach(explode(',', $row['symbole']) as $sym) {
+                                    $uzyte_symbole[trim($sym)] = true;
+                                }
+                            }
+
+                            $dni_kurs = format_days($row['dni_kursowania']);
+                            if (strpos($dni_kurs, '①') !== false) $uzyte_symbole['dzien_1'] = true;
+                            if (strpos($dni_kurs, '②') !== false) $uzyte_symbole['dzien_2'] = true;
+                            if (strpos($dni_kurs, '③') !== false) $uzyte_symbole['dzien_3'] = true;
+                            if (strpos($dni_kurs, '④') !== false) $uzyte_symbole['dzien_4'] = true;
+                            if (strpos($dni_kurs, '⑤') !== false) $uzyte_symbole['dzien_5'] = true;
+                            if (strpos($dni_kurs, '⑥') !== false) $uzyte_symbole['dzien_6'] = true;
+                            if (strpos($dni_kurs, '⑦') !== false) $uzyte_symbole['dzien_7'] = true;
+                            if (strpos($dni_kurs, '⍉') !== false) $uzyte_symbole['oprocze'] = true;
+                            if (strpos($dni_kurs, '⊕') !== false) $uzyte_symbole['oraz'] = true;
+
+                            $color_style = (strtolower($row['kolor_czcionki']) == 'red') ? "color: #d00;" : "";
+                            $czas_glowy = ($typ_plakatu === 'odjazdy') ? $row['odjazd'] : $row['przyjazd'];
+                            $peron = htmlspecialchars($row['peron'] ?? '');
+                            $tor = htmlspecialchars($row['tor'] ?? '');
+                            
+                            echo "<tr style='{$color_style}'>";
+                            echo "<td class='td-time'>" . date("H:i", strtotime($czas_glowy)) . "</td>";
+                            echo "<td class='td-platform'>
+                                    <div class='platform-val'>{$peron}</div>
+                                    <div class='track-val'>{$tor}</div>
                                 </td>";
-                            echo "<td class='col-train'>
-                                    <div class='train-cat-num'>{$row['przewoznik_skrot']}-{$row['typ_skrot']} {$row['numer_pociagu']}</div>
-                                    <div class='train-name'>{$row['nazwa_pociagu']}</div>"
-                                    . render_symbols($row['symbole'], $legend_symbols) .
-                                    "<div class='remarks-details'>
-                                        {$row['daty_kursowania']} " . format_days($row['dni_kursowania']) . "
-                                    </div>
-                                  </td>";
+                            
+                            $train_num = "{$row['przewoznik_skrot']} - {$row['typ_skrot']}<br><span style='font-weight:normal;'>{$row['numer_pociagu']}</span>";
+                            echo "<td class='td-train'>
+                                <div class='train-cat'>{$train_num}</div>
+                                <div class='train-name'>" . mb_strtoupper($row['nazwa_pociagu']) . "</div>"
+                                . render_symbols($row['symbole'], $symbol_definitions) .
+                            "</td>";
                             
                             $id_przejazdu = $row['id_przejazdu'];
-
-                            // Get intermediate stops
-                            $current_kolejnosc = $row['kolejnosc']; // Pobieramy 'kolejnosc' z aktualnego wiersza odjazdu
-                            $sql_przystanki = "SELECT s.nazwa_stacji, sr.przyjazd, sr.uwagi_postoju, s.wytluszczony_plakat 
-                                            FROM szczegoly_rozkladu sr 
-                                            JOIN stacje s ON sr.id_stacji = s.id_stacji 
-                                            WHERE sr.id_przejazdu = ? 
-                                                AND sr.kolejnosc > ? 
-                                                AND sr.id_stacji != ? 
-                                            ORDER BY sr.kolejnosc ASC";
+                            $current_kolejnosc = $row['kolejnosc'];
+                            
+                            if ($typ_plakatu === 'odjazdy') {
+                                $sql_przystanki = "SELECT s.nazwa_stacji, sr.przyjazd AS czas, s.wytluszczony_plakat, sr.uwagi_postoju 
+                                                FROM szczegoly_rozkladu sr 
+                                                JOIN stacje s ON sr.id_stacji = s.id_stacji 
+                                                WHERE sr.id_przejazdu = ? AND sr.kolejnosc > ? 
+                                                ORDER BY sr.kolejnosc ASC";
+                            } else {
+                                $sql_przystanki = "SELECT s.nazwa_stacji, sr.odjazd AS czas, s.wytluszczony_plakat, sr.uwagi_postoju 
+                                                FROM szczegoly_rozkladu sr 
+                                                JOIN stacje s ON sr.id_stacji = s.id_stacji 
+                                                WHERE sr.id_przejazdu = ? AND sr.kolejnosc < ? 
+                                                ORDER BY sr.kolejnosc ASC";
+                            }
+                            
                             $stmt_przystanki = mysqli_prepare($conn, $sql_przystanki);
-                            // Zmieniamy parametry, aby pasowały do nowego zapytania
-                            mysqli_stmt_bind_param($stmt_przystanki, "iii", $id_przejazdu, $current_kolejnosc, $row['id_stacji_koncowej']);
+                            mysqli_stmt_bind_param($stmt_przystanki, "ii", $id_przejazdu, $current_kolejnosc);
                             mysqli_stmt_execute($stmt_przystanki);
                             $result_przystanki = mysqli_stmt_get_result($stmt_przystanki);
                             
-                            $stacje_posrednie_str = "";
+                            $stacje_html = "";
+                            $czas_koncowy = "";
+                            $nazwa_stacji_koncowej = "";
+
+                            $wszystkie_przystanki = [];
                             while ($przystanek = mysqli_fetch_assoc($result_przystanki)) {
-                                if ($przystanek['uwagi_postoju'] == 'ph') {
-                                    $stacja_nazwa = htmlspecialchars($przystanek['nazwa_stacji']);
-                                    
-                                    // WARUNKOWE POGRUBIENIE
+                                $wszystkie_przystanki[] = $przystanek;
+                            }
+                            $ilosc = count($wszystkie_przystanki);
+
+                            if ($typ_plakatu === 'przyjazdy') {
+                                foreach ($wszystkie_przystanki as $index => $przystanek) {
+                                    $czas = $przystanek['czas'] ? date("H:i", strtotime($przystanek['czas'])) : '';
+                                    $nazwa = htmlspecialchars($przystanek['nazwa_stacji']);
                                     if ($przystanek['wytluszczony_plakat']) {
-                                        $stacja_nazwa = "<strong>{$stacja_nazwa}</strong>";
+                                        $nazwa = "<strong>{$nazwa}</strong>";
                                     }
                                     
-                                    $stacje_posrednie_str .= $stacja_nazwa . " " . date("H:i", strtotime($przystanek['przyjazd'])) . ", ";
+                                    if ($index === 0) {
+                                        $stacje_html .= "<span style='font-size: 1.1em; font-weight: bold;'>{$nazwa} {$czas}</span>, ";
+                                    } else {
+                                        if ($przystanek['uwagi_postoju'] === 'ph') {
+                                            $stacje_html .= "{$nazwa} {$czas}, ";
+                                        }
+                                    }
                                 }
-                            }
-                            $stacje_posrednie_str = rtrim($stacje_posrednie_str, ", ");
-                            echo "<td class='col-destination'>{$stacje_posrednie_str}</td>";
-
-                            // MODIFICATION: Direct query for final arrival time for reliability
-                            $czas_koncowy = "";
-                            $sql_czas_koncowy = "SELECT przyjazd FROM szczegoly_rozkladu WHERE id_przejazdu = ? AND id_stacji = ?";
-                            $stmt_czas_koncowy = mysqli_prepare($conn, $sql_czas_koncowy);
-                            mysqli_stmt_bind_param($stmt_czas_koncowy, "ii", $id_przejazdu, $row['id_stacji_koncowej']);
-                            mysqli_stmt_execute($stmt_czas_koncowy);
-                            $result_czas_koncowy = mysqli_stmt_get_result($stmt_czas_koncowy);
-                            if ($czas_koncowy_data = mysqli_fetch_assoc($result_czas_koncowy)) {
-                                if ($czas_koncowy_data['przyjazd']) {
-                                    $czas_koncowy = date("H:i", strtotime($czas_koncowy_data['przyjazd']));
+                            } else {
+                                foreach ($wszystkie_przystanki as $index => $przystanek) {
+                                    $czas = $przystanek['czas'] ? date("H:i", strtotime($przystanek['czas'])) : '';
+                                    $nazwa = htmlspecialchars($przystanek['nazwa_stacji']);
+                                    
+                                    if ($index === $ilosc - 1) {
+                                        $czas_koncowy = $czas;
+                                        $nazwa_stacji_koncowej = $przystanek['wytluszczony_plakat'] ? "<strong>{$nazwa}</strong>" : $nazwa;
+                                    } else {
+                                        if ($przystanek['uwagi_postoju'] === 'ph') {
+                                            if ($przystanek['wytluszczony_plakat']) {
+                                                $nazwa = "<strong>{$nazwa}</strong>";
+                                            }
+                                            $stacje_html .= "{$nazwa} {$czas}, ";
+                                        }
+                                    }
                                 }
                             }
                             
-                            echo "<td class='col-destination-final'>
-                                    <div>" . htmlspecialchars($row['stacja_koncowa']) . "</div>
-                                    <div class='arrival-time'>" . $czas_koncowy . "</div>
-                                  </td>";
+                            $stacje_html = rtrim($stacje_html, ", ");
+                            $daty_kurs = trim(htmlspecialchars($row['daty_kursowania']));
+                            
+                            if (!empty($daty_kurs) || !empty(trim($dni_kurs))) {
+                                $stacje_html .= "<div class='dates-row'>
+                                                    <span style='margin-right: 5px; color: #111;'>📅</span> 
+                                                    <span><strong>{$daty_kurs}</strong> {$dni_kurs}</span>
+                                                 </div>";
+                            }
+
+                            echo "<td class='td-destination'>{$stacje_html}</td>";
+
+                            if ($typ_plakatu === 'odjazdy') {
+                                echo "<td class='td-final'>
+                                        <div style='font-weight: bold;'>{$nazwa_stacji_koncowej}</div>
+                                        <div class='final-time'>{$czas_koncowy}</div>
+                                      </td>";
+                            }
+                            
                             echo "</tr>";
                         }
                     } else {
-                        echo "<tr><td colspan='5' style='text-align:center;'>Brak zaplanowanych odjazdów handlowych dla tej stacji.</td></tr>";
+                        $colspan = ($typ_plakatu === 'odjazdy') ? 5 : 4;
+                        echo "<tr><td colspan='{$colspan}' style='text-align:center; padding: 20px; font-weight: bold;'>Brak zaplanowanych pociągów dla tej stacji.</td></tr>";
                     }
                     ?>
                 </tbody>
             </table>
+
             <div class="legend-container">
-                <?php
-                // --- Tablice z danymi pozostają bez zmian ---
-                $abbreviations = [
-                    'IC' => '„PKP Intercity” Spółka Akcyjna', 'TLK' => 'Twoje Linie Kolejowe',
-                    'EIC' => 'Express InterCity', 'EIP' => 'Express InterCity Premium', 'EC' => 'EuroCity',
-                    'PR' => 'POLREGIO S.A.', 'R' => 'REGIO', 'RP' => 'przyspieszony pociąg REGIO',
-                    'KW' => 'Koleje Wielkopolskie sp. z o.o.', 'Os' => 'osobowy', 'OsP' => 'osobowy przyspieszony',
-                    'ŁKA' => '„Łódzka Kolej Aglomeracyjna” sp. z o.o.', 'ŁP' => 'ŁKA przyspieszony'
-                ];
-
-                $symbols = [
-                    'g' => 'zastępcza komunikacja autobusowa', 'h' => '1 klasa', 'T' => '2 klasa',
-                    'k' => 'rezerwacja nieobowiązkowa', 'l' => 'rezerwacja obowiązkowa',
-                    'd' => 'wagon z miejscami do leżenia / kuszetka', 'c' => 'wagon sypialny',
-                    'H' => 'wagon z miejscami sypialnymi dla osób na wózkach - z windą/rampą',
-                    'I' => 'sprzedaż napojów i przekąsek z wózka minibar', 'e' => 'wagon gastronomiczny / restauracyjny',
-                    'Z' => 'automat z napojami i przekąskami', 'M' => 'biletomat w pociągu',
-                    'a' => 'wagon z miejscami dla osób na wózkach - z windą/rampą',
-                    't' => 'wagon z miejscami dla osób na wózkach - bez windy/rampy',
-                    ';' => 'możliwość przewozu rowerów w wagonie nieprzystosowanym',
-                    'b' => 'wagon przystosowany do przewozu rowerów', 'p' => 'przewóz przesyłek konduktorskich',
-                    'W' => 'przełączanie wagonów do innego pociągu', '`' => 'wagon z miejscem zabaw dla dzieci',
-                    '@' => 'dostęp do WiFi', 'V' => 'dostępne miejsce do przewijania dziecka', 'y' => 'klimatyzacja',
-                    'w' => 'wagon z miejscem na duży bagaż', '0' => 'zmiana usług na trasie pociągu'
-                ];
-                
-                $operation_days = [
-                    '~' => 'terminy kursowania / days of operation', '/' => 'oprócz / except', '+' => 'oraz / and also',
-                    '1' => 'w poniedziałki / Mondays', '2' => 'we wtorki / Tuesdays', '3' => 'w środy / Wednesdays',
-                    '4' => 'w czwartki / Thursdays', '5' => 'w piątki / Fridays', '6' => 'w soboty / Saturdays', '7' => 'w niedziele / Sundays'
-                ];
-
-                // ✅ NOWA MAPA ZASTĘPUJĄCA SYMBOLE NA EMOJI
-                $symbol_display_map = [
-                    'g' => '🚌', 'h' => '1️⃣', 'T' => '2️⃣', 'k' => 'R', 'l' => '®',
-                    'd' => '⌶', 'c' => '🛏️', 'H' => '🛏️♿', 'I' => '🛒', 'e' => '🍴',
-                    'Z' => '🥫', 'M' => '🎟️', 'a' => '♿', 't' => '♿', ';' => '🚲',
-                    'b' => '🚲', 'p' => '📦', 'W' => '🔄', '`' => '🧸', '@' => '📶',
-                    'V' => '🚼', 'y' => '❄️', 'w' => '🧳', '0' => 'ℹ️'
-                ];
-                ?>
-
                 <div class="legend-column">
-                    <h4>Objaśnienia skrótów / abbreviations</h4>
-                    <?php foreach ($abbreviations as $abbr => $full_name): ?>
-                        <div class="legend-item legend-abbreviation">
-                            <span class="abbr"><?= htmlspecialchars($abbr) ?></span>
-                            <span class="full-name"><?= htmlspecialchars($full_name) ?></span>
-                        </div>
-                    <?php endforeach; ?>
+                    <h4>objaśnienia skrótów / abbreviations</h4>
+                    <?php 
+                    if (!empty($uzyci_przewoznicy)) {
+                        foreach ($uzyci_przewoznicy as $skrot => $pelna) {
+                            echo "<div class='legend-item'><strong>{$skrot} - {$pelna}</strong></div>";
+                        }
+                        foreach ($uzyte_typy_pociagow as $skrot => $pelna) {
+                            echo "<div class='legend-item' style='padding-left: 20px;'>{$skrot} - {$pelna}</div>";
+                        }
+                    } else {
+                        echo "<div class='legend-item'><span>Brak skrótów</span></div>";
+                    }
+                    ?>
                 </div>
 
                 <div class="legend-column">
-                    <h4>Objaśnienia znaków / symbols</h4>
+                    <h4>objaśnienia znaków / symbols</h4>
                     <?php
-                        $symbol_keys = array_keys($symbols);
-                        $half = ceil(count($symbol_keys) / 2);
-                        for ($i = 0; $i < $half; $i++) {
-                            $key = $symbol_keys[$i];
-                            // ✅ ZMIANA: Wyświetlamy emoji z mapy, a jeśli nie ma, to oryginalny klucz
-                            $display_symbol = $symbol_display_map[$key] ?? htmlspecialchars($key);
-                            echo "<div class='legend-item'>
-                                    <span class='symbol'>" . $display_symbol . "</span>
-                                    <span>" . htmlspecialchars($symbols[$key]) . "</span>
-                                  </div>";
-                        }
-                    ?>
-                </div>
+                    $wypisane = 0;
+                    $uzyte_symbole['kalendarz'] = true;
+                    $polowa = ceil(count($uzyte_symbole) / 2);
 
-                <div class="legend-column">
-                    <h4 style="visibility: hidden;">Objaśnienia znaków / symbols</h4>
-                     <?php
-                        for ($i = $half; $i < count($symbol_keys); $i++) {
-                            $key = $symbol_keys[$i];
-                            // ✅ ZMIANA: Wyświetlamy emoji z mapy, a jeśli nie ma, to oryginalny klucz
-                            $display_symbol = $symbol_display_map[$key] ?? htmlspecialchars($key);
+                    foreach ($symbol_definitions as $klucz => $dane) {
+                        if (isset($uzyte_symbole[$klucz])) {
                             echo "<div class='legend-item'>
-                                    <span class='symbol'>" . $display_symbol . "</span>
-                                    <span>" . htmlspecialchars($symbols[$key]) . "</span>
+                                    <span class='symbol'>{$dane[0]}</span>
+                                    <span>- {$dane[1]}</span>
                                   </div>";
+                            $wypisane++;
+                            
+                            if ($wypisane == $polowa && count($uzyte_symbole) > 1) {
+                                echo "</div><div class='legend-column'><h4>objaśnienia znaków / symbols</h4>";
+                            }
                         }
+                    }
                     ?>
-                    
-                    <div style="margin-top: 15px; border-top: 1px solid #A0A0A0; padding-top: 15px;">
-                        <?php foreach ($operation_days as $symbol => $description): ?>
-                            <div class="legend-item">
-                                <span class="symbol"><?= $symbol_display_map[$symbol] ?? htmlspecialchars($symbol) ?></span>
-                                <span><?= htmlspecialchars($description) ?></span>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
                 </div>
             </div>
+
+            <div class="poster-footer" style="margin-top: 25px; font-size: 0.85em; line-height: 1.3; text-align: left; padding-bottom: 10px;">
+                Sprzedaż biletów krajowych w każdym pociągu, na zasadach określonych przez danego przewoźnika. / Tickets for domestic routes can be purchased on each train, consistent with the terms specified by the carrier.<br>
+                Za dane handlowe pociągów odpowiada przewoźnik. / Carriers are responsible for commercial data of trains.<br>
+                Numery telefonicznej informacji poszczególnych przewoźników: / Infoline numbers to individual carriers:<br>
+                <strong>PR - 22 474 00 44 (6:00-22:00) (koszt według taryfy operatora)</strong> / 22 474 00 44 (6:00-22:00) (connection cost according to operator rates)
+            </div>
+
         </div>
     <?php endif; ?>
 </div>
+
 </body>
 </html>

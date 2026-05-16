@@ -1,95 +1,71 @@
 <?php
+session_start();
 require 'db_config.php';
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['zapis'])) {
-    $id_trasy = $_POST['id_trasy'];
-    $nr_poc = $_POST['nr_poc'];
-    $id_typu_pociagu = $_POST['id_typu_pociagu']; // Odczytujemy ID rodzaju pociągu
-    $nazwa_pociagu = $_POST['nazwa_pociagu'];
-    $daty_kursowania = $_POST['daty_kursowania'];
-    $dni_kursowania = $_POST['dni_kursowania'];
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $id_trasy = $_SESSION['id_trasy'] ?? null;
+    $nr_poc = $_SESSION['nr_poc'] ?? null;
+    $id_typu_pociagu = $_SESSION['id_typu_pociagu'] ?? null;
+    $nazwa_pociagu = $_SESSION['nazwa_pociagu'] ?? '';
     
-    // Konwertujemy tablicę symboli na tekst do zapisu w bazie
-    $symbole = isset($_POST['symbole']) ? implode(',', $_POST['symbole']) : null;
-    
-    $dane_do_zapisu = $_POST['zapis'];
+    // To są teksty na plakaty:
+    $daty_kursowania = $_POST['daty_kursowania'] ?? '';
+    $dni_kursowania = $_POST['dni_kursowania'] ?? '';
+    $symbole = json_encode($_POST['symbole'] ?? [], JSON_UNESCAPED_UNICODE);
 
-    // Weryfikacja, czy kluczowe dane nie są puste
-    if (empty($id_trasy) || empty($nr_poc) || empty($id_typu_pociagu)) {
-        $error_msg = "Błąd zapisu: Trasa, rodzaj pociągu i numer pociągu są wymagane. Uzupełnij dane i spróbuj ponownie.";
-        header("Location: generator_rozkladu.php?status=error&msg=" . urlencode($error_msg));
-        exit();
+    // Parametry instancji
+    $data_od = $_POST['data_od'] ?? date('Y-m-d');
+    $data_do = $_POST['data_do'] ?? date('Y-m-d');
+    $dni_tygodnia = $_POST['dni_tygodnia'] ?? []; // Tablica 1-7
+    $zapis = $_POST['zapis'] ?? [];
+
+    if (!$id_trasy || empty($zapis)) {
+        die("Błąd: Brak danych trasy do zapisu.");
     }
 
-    mysqli_begin_transaction($conn);
+    $start_time = strtotime($data_od);
+    $end_time = strtotime($data_do);
+    $wygenerowano = 0;
 
-    try {
-        // 1. Stworzenie wpisu w tabeli `przejazdy` z nowymi danymi
-        $stmt1 = mysqli_prepare($conn, "INSERT INTO przejazdy (id_trasy, numer_pociagu, id_typu_pociagu, nazwa_pociagu, daty_kursowania, dni_kursowania, symbole) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    // PĘTLA: Idziemy dzień po dniu od daty startu do daty końca
+    for ($t = $start_time; $t <= $end_time; $t += 86400) {
+        $dzien_tygodnia = date('N', $t); // 1 = Poniedziałek, 7 = Niedziela
         
-        // Bindowanie parametrów (7 zmiennych, typy "iisssss")
-        mysqli_stmt_bind_param($stmt1, "issssss", $id_trasy, $nr_poc, $id_typu_pociagu, $nazwa_pociagu, $daty_kursowania, $dni_kursowania, $symbole);
-        
-        mysqli_stmt_execute($stmt1);
-        
-        if (mysqli_stmt_errno($stmt1)) {
-            throw new Exception("Błąd SQL przy tworzeniu przejazdu: " . mysqli_stmt_error($stmt1));
-        }
+        // Generujemy pociąg TYLKO jeśli ten dzień tygodnia był zaznaczony w panelu
+        if (in_array($dzien_tygodnia, $dni_tygodnia)) {
+            $data_kursowania_db = date('Y-m-d', $t);
 
-        $id_przejazdu = mysqli_insert_id($conn);
-        if ($id_przejazdu == 0) {
-            throw new Exception("Nie udało się utworzyć nowego przejazdu w bazie danych (brak zwróconego ID).");
-        }
-
-        // 2. Wstawienie wszystkich szczegółów do `szczegoly_rozkladu` z nowymi danymi
-        // ZMIANA: Dodano kolumny przyjazd_rzecz i odjazd_rzecz do zapytania
-        $stmt2 = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, przyjazd_rzecz, odjazd_rzecz, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        foreach ($dane_do_zapisu as $wpis) {
-            $przyjazd = empty($wpis['przyjazd']) ? null : $wpis['przyjazd'];
-            $odjazd = empty($wpis['odjazd']) ? null : $wpis['odjazd'];
-            $peron = empty($wpis['peron']) ? null : $wpis['peron'];
-            $tor = empty($wpis['tor']) ? null : $wpis['tor'];
+            // 1. Zapisujemy główny przejazd dla konkretnej daty
+            $stmt = mysqli_prepare($conn, "INSERT INTO przejazdy (id_trasy, numer_pociagu, nazwa_pociagu, id_typu_pociagu, daty_kursowania, dni_kursowania, symbole, data_kursowania) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            mysqli_stmt_bind_param($stmt, "ississss", $id_trasy, $nr_poc, $nazwa_pociagu, $id_typu_pociagu, $daty_kursowania, $dni_kursowania, $symbole, $data_kursowania_db);
+            mysqli_stmt_execute($stmt);
             
-            // ZMIANA: Przepisujemy godziny planowe do rzeczywistych na start
-            $przyjazd_rzecz = $przyjazd;
-            $odjazd_rzecz = $odjazd;
-            
-            // ZMIANA: Zaktualizowano typy zmiennych (doszły 2 stringi) i listę zmiennych w bind_param
-            mysqli_stmt_bind_param($stmt2, "iiisssssss", 
-                $id_przejazdu, 
-                $wpis['id_stacji'], 
-                $wpis['kolejnosc'], 
-                $przyjazd, 
-                $odjazd, 
-                $przyjazd_rzecz, // Wstawiamy to samo co w planie
-                $odjazd_rzecz,   // Wstawiamy to samo co w planie
-                $wpis['uwagi_postoju'],
-                $peron,
-                $tor
-            );
-            mysqli_stmt_execute($stmt2);
+            // Pobieramy ID właśnie wygenerowanego pociągu
+            $new_id_przejazdu = mysqli_insert_id($conn);
 
-            if (mysqli_stmt_errno($stmt2)) {
-                 throw new Exception("Błąd SQL przy zapisie szczegółów dla stacji ID {$wpis['id_stacji']}: " . mysqli_stmt_error($stmt2));
+            // 2. Wrzucamy do niego wszystkie stacje po kolei
+            foreach ($zapis as $wiersz) {
+                $id_stacji = $wiersz['id_stacji'];
+                $kolejnosc = $wiersz['kolejnosc'];
+                $przyjazd = !empty($wiersz['przyjazd']) ? $wiersz['przyjazd'] : null;
+                $odjazd = !empty($wiersz['odjazd']) ? $wiersz['odjazd'] : null;
+                $uwagi = $wiersz['uwagi_postoju'];
+                $peron = !empty($wiersz['peron']) ? $wiersz['peron'] : null;
+                $tor = !empty($wiersz['tor']) ? $wiersz['tor'] : null;
+
+                // Od razu wpisujemy czas planowy jako rzeczywisty - dzięki temu panel dyżurnego jest czysty
+                $stmt_s = mysqli_prepare($conn, "INSERT INTO szczegoly_rozkladu (id_przejazdu, id_stacji, kolejnosc, przyjazd, odjazd, przyjazd_rzecz, odjazd_rzecz, uwagi_postoju, peron, tor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                mysqli_stmt_bind_param($stmt_s, "iiisssssss", $new_id_przejazdu, $id_stacji, $kolejnosc, $przyjazd, $odjazd, $przyjazd, $odjazd, $uwagi, $peron, $tor);
+                mysqli_stmt_execute($stmt_s);
             }
+            $wygenerowano++;
         }
-
-        mysqli_commit($conn);
-        $status = "success";
-        $message = "Rozkład dla pociągu nr {$nr_poc} został pomyślnie zapisany!";
-
-    } catch (Exception $e) {
-        mysqli_rollback($conn);
-        $status = "error";
-        $message = "Wystąpił błąd podczas zapisu: " . $e->getMessage();
     }
 
-    header("Location: generator_rozkladu.php?status={$status}&msg=" . urlencode($message));
-    exit();
+    // Czyścimy pamięć po skończonej pracy
+    unset($_SESSION['postoje'], $_SESSION['czas_odjazdu'], $_SESSION['nr_poc'], $_SESSION['nazwa_pociagu'], $_SESSION['symbole'], $_SESSION['daty_kursowania'], $_SESSION['dni_kursowania']);
 
-} else {
-    header("Location: generator_rozkladu.php");
-    exit();
+    header("Location: generator_rozkladu.php?status=success&msg=Sukces! Utworzono $wygenerowano niezależnych pociągów we wskazanych datach.");
+    exit;
 }
 ?>

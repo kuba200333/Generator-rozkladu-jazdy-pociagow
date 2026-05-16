@@ -157,7 +157,7 @@ if ($id_przejazdu_wybranego) {
             font-size: 1.25em; 
             position: relative; 
             border-bottom: 1px solid #f5f5f5;
-            min-height: 45px; /* Kontrola wysokości dla spójnych obliczeń slotów */
+            min-height: 45px;
         }
 
         .station-name { font-weight: 500; flex-grow: 1; color: #333; text-transform: uppercase; }
@@ -189,7 +189,7 @@ if ($id_przejazdu_wybranego) {
 
         .ticker-wrapper { flex-grow: 1; overflow: hidden; min-width: 0; }
         .scrolling-text { display: inline-block; padding-left: 100%; animation: marquee 12s linear infinite; } 
-        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        @keyframes marquee { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-100%, 0, 0); } }
 
         .bottom-right { width: 25%; padding: 0 25px; display: flex; justify-content: space-between; align-items: center; }
         .clock-container { display: flex; flex-direction: column; align-items: flex-end; }
@@ -232,7 +232,13 @@ if ($id_przejazdu_wybranego) {
             <select name="id_przejazdu" id="id_przejazdu" onchange="this.form.submit()" style="padding: 5px; font-size: 16px; margin: 10px;">
                 <option value="">-- Wybierz z listy --</option>
                 <?php
-                $sql_przejazdy = "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy, tp.skrot as typ_skrot FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu ORDER BY p.data_utworzenia DESC";
+                $dzisiaj = date('Y-m-d');
+                $sql_przejazdy = "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy, tp.skrot as typ_skrot 
+                                  FROM przejazdy p 
+                                  JOIN trasy t ON p.id_trasy = t.id_trasy 
+                                  LEFT JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu 
+                                  WHERE p.data_kursowania = '$dzisiaj'
+                                  ORDER BY p.data_utworzenia DESC";
                 $res = mysqli_query($conn, $sql_przejazdy);
                 while ($row = mysqli_fetch_assoc($res)) {
                     $opis = "Pociąg {$row['typ_skrot']} {$row['numer_pociagu']} ({$row['nazwa_pociagu']}) | {$row['nazwa_trasy']}";
@@ -343,6 +349,18 @@ if ($id_przejazdu_wybranego) {
         const totalStations = visibleSchedule.length;
         let currentVisibleIndex = <?php echo $start_index !== null ? $start_index : 0; ?>;
         let displayMode = 1; 
+        let lastDepartureTime = null; 
+        let isMaster = false; 
+
+        // --- ZMIENNE DO PASKA DYNAMICZNEGO ---
+        let infoLoopTimeout = null;
+        let calculatedDelayMinutes = 0;
+        let playDelayAnnouncement = false;
+        let playDestinationInLoop = false;
+        const trainInfo = "<?php echo htmlspecialchars($info_pociagu); ?>";
+        const trainName = "<?php echo htmlspecialchars($nazwa_pociagu); ?>";
+        const destination = "<?php echo htmlspecialchars($kierunek); ?>";
+        // ------------------------------------
         
         const stationList = document.getElementById('station-list-view');
         const btnPrev = document.getElementById('btn-prev');
@@ -351,11 +369,55 @@ if ($id_przejazdu_wybranego) {
         const line2 = document.getElementById('line2');
         const audioPlayer = document.getElementById('announcement-audio');
 
+        // === SYNCHRONIZACJA Z EKRANEM LED (BroadcastChannel) ===
+        const syncChannel = new BroadcastChannel('train_display_sync');
+
+        syncChannel.onmessage = (event) => {
+            const data = event.data;
+            if (data.type === 'update_state') {
+                isMaster = false; 
+                let prevIdx = currentVisibleIndex;
+                currentVisibleIndex = data.index;
+                displayMode = data.mode;
+                lastDepartureTime = data.lastDepartureTime;
+
+                playDelayAnnouncement = false;
+                playDestinationInLoop = false;
+                
+                if (displayMode === 0) {
+                    triggerSimulation(prevIdx, currentVisibleIndex, 0);
+                } else {
+                    triggerSimulation(currentVisibleIndex, currentVisibleIndex, 1);
+                }
+                
+                renderScreen();
+            } else if (data.type === 'trigger_loop') {
+                startInfoTicker();
+            }
+        };
+
+        function sendSyncUpdate() {
+            syncChannel.postMessage({
+                type: 'update_state',
+                index: currentVisibleIndex,
+                mode: displayMode,
+                lastDepartureTime: lastDepartureTime
+            });
+        }
+        
+        function saveAutoTime(id, type) {
+            const formData = new FormData();
+            formData.append('id_szczegolu', id);
+            formData.append('typ', type);
+            fetch('zapisz_czas_auto.php', { method: 'POST', body: formData })
+                .catch(err => console.error("Błąd auto-zapisu:", err));
+        }
+
         // BARDZO BLISKI ZOOM NA MAPIE (poziom 18)
         if (routeDataMap && routeDataMap.length > 0) {
             map = L.map('map', {zoomControl: false}).setView([routeDataMap[0].lat, routeDataMap[0].lng], 18); 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19, // Zezwalamy na głębsze przybliżenie
+                maxZoom: 19,
                 attribution: '&copy; OpenStreetMap'
             }).addTo(map);
 
@@ -450,11 +512,34 @@ if ($id_przejazdu_wybranego) {
             if (fromMapIdx === -1) fromMapIdx = 0;
             if (toMapIdx === -1) toMapIdx = 0;
 
-            if (mode === 1 || fromMapIdx === toMapIdx) {
+            if (mode === 1) {
+                // Sprawdzamy czy aktualna trasa kończy się na peronie docelowym
+                let destLat = routeDataMap[toMapIdx].lat;
+                let destLng = routeDataMap[toMapIdx].lng;
+                
+                let isGoingToDest = simPath.length > 0 && 
+                                    Math.abs(simPath[simPath.length-1][0] - destLat) < 0.0001 && 
+                                    Math.abs(simPath[simPath.length-1][1] - destLng) < 0.0001;
+
+                if (isGoingToDest && simProgress < 1.0) {
+                    // Pociąg porusza się po właściwych torach!
+                    // Pozwalamy mu jechać dalej tym samym torem, ale zmieniamy prędkość tak, aby dojechał na miejsce w równe 10 sekund.
+                    let progressLeft = 1.0 - simProgress;
+                    if (progressLeft > 0) {
+                        simTotalTimeSec = 5 / progressLeft;
+                    }
+                } else {
+                    // Jeśli np. klikniesz "Wstecz", po prostu kładziemy pociąg na stacji
+                    simPath = [[destLat, destLng]];
+                    simProgress = 1.0;
+                }
+            } else if (fromMapIdx === toMapIdx) {
+                // Jeśli start i meta to to samo miejsce, stoimy w miejscu
                 simPath = [[routeDataMap[toMapIdx].lat, routeDataMap[toMapIdx].lng]];
                 simProgress = 1.0;
                 simTotalTimeSec = 1;
             } else {
+                // Standardowy wyjazd w trasę z odpowiednim czasem rozkładowym
                 simPath = getPathBetweenMapIndices(fromMapIdx, toMapIdx);
                 simProgress = 0.0;
 
@@ -484,7 +569,7 @@ if ($id_przejazdu_wybranego) {
             let pos = interpolatePositionMap(simPath, simProgress);
             if (pos) {
                 trainMarkerMap.setLatLng(pos);
-                map.panTo(pos, {animate: true, duration: 0.1}); 
+                map.panTo(pos, {animate: false}); 
                 
                 if (lastPosForAngleMap && (lastPosForAngleMap[0] !== pos[0] || lastPosForAngleMap[1] !== pos[1])) {
                     let p1 = map.project(lastPosForAngleMap);
@@ -506,7 +591,6 @@ if ($id_przejazdu_wybranego) {
         function updateTrainSizesMap() {
             if(!map) return;
             let z = map.getZoom();
-            // Modyfikator dla jeszcze większego pociągu przy zoom 18
             let size = Math.max(16, z * 2.5); 
             let rotator = document.getElementById('train-rotator');
             if (rotator) rotator.style.fontSize = size + 'px';
@@ -514,7 +598,6 @@ if ($id_przejazdu_wybranego) {
 
         // === SYSTEM TEKSTOWY I LOGIKA LISTY ===
         
-        // ZAWSZE WYMUSZAMY P. i O. z br tagiem, chyba że w ogóle nie ma godzin
         function getStationTimes(station) { 
              let times = [];
              if (station.przyjazd) times.push('p. ' + station.przyjazd.substring(0, 5)); 
@@ -540,6 +623,87 @@ if ($id_przejazdu_wybranego) {
             element.appendChild(wrapper);
         }
 
+        function calculateDelay() {
+            if (!lastDepartureTime) return 0;
+            const now = new Date();
+            const [hours, minutes] = lastDepartureTime.substring(0, 5).split(':').map(Number);
+            let scheduledDeparture = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+            const differenceMs = now.getTime() - scheduledDeparture.getTime();
+            const delayMinutes = Math.floor(differenceMs / (1000 * 60));
+            return Math.max(0, delayMinutes);
+        }
+
+        function startInfoTicker() {
+            audioPlayer.pause(); audioPlayer.currentTime = 0; audioPlayer.onended = null;
+            clearTimeout(infoLoopTimeout);
+
+            let loopState = 0;
+            const weekDays = ['NIEDZIELA', 'PONIEDZIAŁEK', 'WTOREK', 'ŚRODA', 'CZWARTEK', 'PIĄTEK', 'SOBOTA'];
+            const months = ['STYCZNIA', 'LUTEGO', 'MARCA', 'KWIETNIA', 'MAJA', 'CZERWCA', 'LIPCA', 'SIERPNIA', 'WRZEŚNIA', 'PAŹDZIERNIKA', 'LISTOPADA', 'GRUDNIA'];
+
+            function loopStep() {
+                clearTimeout(infoLoopTimeout);
+                line1.innerHTML = ''; line2.innerHTML = '';
+                let nextStepDelay = 7500;
+
+                switch(loopState) {
+                    case 0:
+                        const lastStation = visibleSchedule[totalStations - 1];
+                        const arrivalTime = lastStation && lastStation.przyjazd ? lastStation.przyjazd.substring(0, 5) : '??:??';
+                        displayText(line1, 'POCIĄG ' + trainInfo + ' ' + trainName.toUpperCase());
+                        displayText(line2, 'STACJA KOŃCOWA: ' + destination.toUpperCase() + ' p.' + arrivalTime);
+                        if (playDestinationInLoop && isMaster) {
+                            playDestinationAnnouncement(); playDestinationInLoop = false; nextStepDelay = 5000;
+                        } else { nextStepDelay = 3750; }
+                        loopState = 1;
+                        break;
+                    case 1:
+                        if (calculatedDelayMinutes > 4) {
+                            displayText(line1, 'OPÓŹNIENIE POCIĄGU:');
+                            displayText(line2, `${calculatedDelayMinutes} MINUT.`);
+                            if (playDelayAnnouncement && isMaster) {
+                                playSequential(['dzwiek/opoznienie_pociagu.mp3', `dzwiek/${calculatedDelayMinutes}.mp3`]);
+                                playDelayAnnouncement = false;
+                            }
+                            nextStepDelay = 5000; loopState = 2;
+                        } else { loopState = 2; nextStepDelay = 10; }
+                        break;
+                    case 2:
+                        const remainingStations = visibleSchedule.slice(currentVisibleIndex);
+                        if (remainingStations.length <= 1) { loopState = 3; nextStepDelay = 10; }
+                        else {
+                            displayText(line1, 'TRASA:');
+                            const routeString = remainingStations.map(s => {
+                                let stStr = `${s.nazwa_stacji.toUpperCase()} ${getStationTimes(s).replace('<br>', ' ')}`;
+                                const initialDelay = calculatedDelayMinutes;
+                                let correctedDelay = initialDelay;
+                                const passed = remainingStations.indexOf(s);
+                                if (passed > 0) correctedDelay = Math.max(0, initialDelay - (passed * 0.25));
+                                if (Math.ceil(correctedDelay) > 0) stStr += ` (+${Math.ceil(correctedDelay)})`;
+                                return stStr;
+                            }).join('  -  ');
+                            
+                            const wrapper = document.createElement('div'); wrapper.className = 'ticker-wrapper';
+                            const scrollingSpan = document.createElement('span'); scrollingSpan.className = 'scrolling-text';
+                            const duration = Math.max(15, routeString.length * 0.25);
+                            scrollingSpan.textContent = routeString; scrollingSpan.style.animation = `marquee ${duration}s linear infinite`;
+                            wrapper.appendChild(scrollingSpan); line2.appendChild(wrapper);
+                            nextStepDelay = (duration * 1000) + 2000; loopState = 3;
+                        }
+                        break;
+                    case 3:
+                        const now = new Date();
+                        const dateStr = `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+                        const timeStr = now.toTimeString().split(' ')[0].substring(0, 8);
+                        displayText(line1, dateStr); displayText(line2, `${weekDays[now.getDay()]} ${timeStr}`);
+                        loopState = 0;
+                        break;
+                }
+                infoLoopTimeout = setTimeout(loopStep, nextStepDelay);
+            }
+            loopStep();
+        }
+
         function renderScreen() {
             const currentIdx = currentVisibleIndex;
             let html = '';
@@ -547,40 +711,28 @@ if ($id_przejazdu_wybranego) {
             let container = document.querySelector('.station-list-container');
             let MAX_SLOTS = 6; 
             if (container && container.clientHeight > 0) {
-                // Bezpieczne dzielenie wysokości kontenera na poszczególne stacje
                 MAX_SLOTS = Math.floor((container.clientHeight - 40) / 65); 
             }
             if (MAX_SLOTS < 5) MAX_SLOTS = 5;
 
             clearInterval(dynamicRotatorInterval);
 
-            // Kolekcja indeksów, które MOGĄ być pokazane na liście statycznie
             let staticIndices = new Set();
             
-            // 1. Zawsze pokazujemy stację początkową (szara w historii)
             staticIndices.add(0); 
-            
-            // 2. Jeśli jesteśmy dalej, chcemy pokazać stację bezpośrednio poprzedzającą
             if (currentIdx > 0) staticIndices.add(currentIdx - 1); 
-            
-            // 3. Zawsze pokazujemy Aktualną (jeśli to nie meta)
             staticIndices.add(currentIdx); 
-            
-            // 4. Zawsze pokazujemy Stację końcową
             if (totalStations > 1) staticIndices.add(totalStations - 1);
 
             let slotsLeft = MAX_SLOTS - staticIndices.size;
-            
             let futureStart = currentIdx + 1;
             let futureEnd = totalStations - 1; 
             let futureCount = futureEnd - futureStart;
-            
             let futureStationsForDynamic = [];
 
-            // Jeśli jest więcej przyszłych stacji niż wolnego miejsca
             if (futureCount > 0) {
                 if (futureCount > slotsLeft) {
-                    slotsLeft--; // Rezerwujemy 1 slot na migający blok "Zastępczy"
+                    slotsLeft--; 
                     for (let i = futureStart; i < futureEnd; i++) {
                         if (slotsLeft > 0) {
                             staticIndices.add(i);
@@ -590,7 +742,6 @@ if ($id_przejazdu_wybranego) {
                         }
                     }
                 } else {
-                    // Mamy dużo miejsca - pakujemy wszystkie
                     for (let i = futureStart; i < futureEnd; i++) {
                         staticIndices.add(i);
                         slotsLeft--;
@@ -598,8 +749,6 @@ if ($id_przejazdu_wybranego) {
                 }
             }
 
-            // Jeśli pociąg już prawie dojechał i zostało nam puste miejsce, dopychamy starą historię, 
-            // żeby ekran nie wyglądał na pusty
             let pastIdx = currentIdx - 2;
             while (slotsLeft > 0 && pastIdx > 0) {
                 staticIndices.add(pastIdx);
@@ -607,23 +756,19 @@ if ($id_przejazdu_wybranego) {
                 slotsLeft--;
             }
 
-            // Sortujemy chronologicznie, żeby wyrenderować po kolei
             let sortedIndices = Array.from(staticIndices).sort((a,b) => a-b);
-            
             let lastRendered = -1;
+            
             for (let i of sortedIndices) {
                 
-                // Przerywnik jeśli zniknęła jakaś historia między stacjami (kropeczki pionowe)
                 if (lastRendered !== -1 && i - lastRendered > 1) {
                     if (lastRendered >= currentIdx) {
-                        // PRZESKAKUJĄCY BLOK DYNAMICZNY (Z Przyszłości)
                         html += `<li class="station-item status-future" style="min-height: 45px;">
                                     <span class="indicator" style="background: transparent; border: none; font-size: 22px; color: #004080; left: 10px; top: 40%;">↓</span>
                                     <span class="station-name fade-transition" id="dyn-name">...</span>
                                     <span class="station-time fade-transition" id="dyn-time">...</span>
                                  </li>`;
                     } else {
-                        // Trzykropek usuwanej historii
                         html += `<li style="padding: 0 0 0 51px; color: #aaa; font-size: 20px; min-height: 20px; border: none; display: flex; align-items: flex-start;">⋮</li>`;
                     }
                 }
@@ -635,7 +780,6 @@ if ($id_przejazdu_wybranego) {
                 else cls = 'status-future';
 
                 let extraStyle = '';
-                // Blokowanie końcowej stacji na dole
                 if (i === totalStations - 1 && totalStations > 1) {
                     extraStyle = 'margin-top: auto; border-top: 2px solid #ddd; padding-top: 15px;';
                 }
@@ -651,7 +795,6 @@ if ($id_przejazdu_wybranego) {
 
             stationList.innerHTML = html;
 
-            // Inicjalizacja rotacji przedostatniego bloku
             if (futureStationsForDynamic.length > 0) {
                 let fIdx = 0;
                 setTimeout(() => {
@@ -682,7 +825,7 @@ if ($id_przejazdu_wybranego) {
                 }
             }
 
-            // Pasek dolny
+            // --- ZAKTUALIZOWANY PASEK DOLNY ---
             const station = visibleSchedule[currentVisibleIndex];
             const stationName = station.nazwa_stacji.toUpperCase();
             
@@ -690,16 +833,22 @@ if ($id_przejazdu_wybranego) {
             if (station.przyjazd) bottomBarTime += 'p. ' + station.przyjazd.substring(0, 5) + ' ';
             if (station.odjazd) bottomBarTime += 'o. ' + station.odjazd.substring(0, 5);
             
+            clearTimeout(infoLoopTimeout);
+            
             if (displayMode === 0) { 
+                calculatedDelayMinutes = calculateDelay();
                 displayText(line1, 'NASTĘPNA STACJA:');
                 displayText(line2, stationName + ' (' + bottomBarTime.trim() + ')');
+                // Ticker zostanie uruchomiony przez callback z audio (jeśli Master) lub syncChannel (jeśli Slave)
             } else { 
+                calculatedDelayMinutes = 0;
                 if (currentIdx === totalStations - 1) {
                     displayText(line1, 'STACJA KOŃCOWA:');
                 } else {
                     displayText(line1, 'STACJA:');
                 }
                 displayText(line2, stationName + ' (' + bottomBarTime.trim() + ')');
+                audioPlayer.onended = null;
             }
 
             btnPrev.disabled = (currentIdx === 0 && displayMode === 1);
@@ -716,15 +865,19 @@ if ($id_przejazdu_wybranego) {
                               .replace(/[\. ]/g, '_');
         }
         
-        function playSequential(files) {
+        function playSequential(files, onFinishedCallback = null) {
             audioPlayer.pause();
             audioPlayer.currentTime = 0;
             audioPlayer.onended = null;
             audioPlaylist = files;
             currentAudioIndex = 0;
-            if (audioPlaylist.length === 0) return;
+            
+            if (audioPlaylist.length === 0) {
+                if (onFinishedCallback) onFinishedCallback();
+                return;
+            }
 
-            audioPlayer.onended = () => {
+            const normalOnEnd = () => {
                 currentAudioIndex++;
                 if (currentAudioIndex < audioPlaylist.length) {
                     audioPlayer.src = audioPlaylist[currentAudioIndex];
@@ -732,17 +885,31 @@ if ($id_przejazdu_wybranego) {
                 } else {
                     audioPlayer.onended = null;
                     audioPlaylist = [];
+                    if (onFinishedCallback) onFinishedCallback();
                 }
             };
+
             audioPlayer.src = audioPlaylist[0];
-            audioPlayer.play().catch(e => console.log("Audio start err:", e));
+            audioPlayer.onended = normalOnEnd;
+            audioPlayer.play().catch(e => {
+                console.log("Audio start err:", e);
+                // Jeśli przeglądarka zablokuje audio (bo nie było interakcji), 
+                // mimo wszystko wymuszamy wywołanie callbacku, aby pasek ruszył!
+                if (onFinishedCallback) onFinishedCallback();
+            });
         }
 
         function playAnnouncement(stationName, mode) {
             const prefix = mode === 0 ? 'n_' : 's_';
             const fileName = getFileName(stationName);
             const fullPath = `dzwiek/${prefix}${fileName}.mp3`;
-            playSequential([fullPath]);
+            
+            const callback = (mode === 0) ? () => {
+                startInfoTicker();
+                syncChannel.postMessage({ type: 'trigger_loop' });
+            } : null;
+
+            playSequential([fullPath], callback);
         }
 
         function playDestinationAnnouncement() {
@@ -752,39 +919,58 @@ if ($id_przejazdu_wybranego) {
         
         // === NAWIGACJA Z KLIKNIĘĆ ===
         function navigateList(direction) {
+            isMaster = true; // Klikamy my, my tu dowodzimy
             let prevIdx = currentVisibleIndex;
 
             if (direction === 'next') {
                 if (displayMode === 1) { 
+                    saveAutoTime(visibleSchedule[currentVisibleIndex].id_szczegolu, 'odjazd'); // Auto-zapis u dyżurnego
                     if (currentVisibleIndex < totalStations - 1) {
+                        lastDepartureTime = visibleSchedule[currentVisibleIndex].odjazd;
                         currentVisibleIndex++; 
-                        displayMode = 0; 
+                        displayMode = 0;
+                        playDelayAnnouncement = true;
+                        playDestinationInLoop = true;
                         triggerSimulation(prevIdx, currentVisibleIndex, 0); 
-                        playAnnouncement(visibleSchedule[currentVisibleIndex].nazwa_stacji, 0); 
+                        if (isMaster) playAnnouncement(visibleSchedule[currentVisibleIndex].nazwa_stacji, 0); 
                     }
                 } else { 
                     displayMode = 1; 
+                    saveAutoTime(visibleSchedule[currentVisibleIndex].id_szczegolu, 'przyjazd'); // Auto-zapis
                     triggerSimulation(currentVisibleIndex, currentVisibleIndex, 1); 
-                    // Sprawdzamy czy to już stacja końcowa
-                    if (currentVisibleIndex === totalStations - 1) {
-                        playDestinationAnnouncement();
-                    } else {
-                        playAnnouncement(visibleSchedule[currentVisibleIndex].nazwa_stacji, 1); 
+                    if (isMaster) {
+                        if (currentVisibleIndex === totalStations - 1) {
+                            playDestinationAnnouncement();
+                        } else {
+                            playAnnouncement(visibleSchedule[currentVisibleIndex].nazwa_stacji, 1); 
+                        }
                     }
                 }
             } else if (direction === 'prev') {
                 if (displayMode === 0) { 
                     displayMode = 1; 
+                    lastDepartureTime = (currentVisibleIndex > 0) ? visibleSchedule[currentVisibleIndex - 1].odjazd : null;
                     triggerSimulation(currentVisibleIndex - 1, currentVisibleIndex - 1, 1); 
                 } else { 
                     if (currentVisibleIndex > 0) {
                         currentVisibleIndex--; 
                         displayMode = 0; 
+                        lastDepartureTime = (currentVisibleIndex > 0) ? visibleSchedule[currentVisibleIndex - 1].odjazd : null;
+                        playDelayAnnouncement = true;
+                        playDestinationInLoop = true;
                         triggerSimulation(currentVisibleIndex + 1, currentVisibleIndex, 0); 
                     }
                 }
             }
+            
+            // Wysłanie szybkiej aktualizacji do innych połączonych tablic
+            sendSyncUpdate();
             renderScreen();
+        }
+        
+        if (displayMode === 0) {
+             if (currentVisibleIndex > 0) lastDepartureTime = visibleSchedule[currentVisibleIndex - 1].odjazd;
+             playDestinationInLoop = true; playDelayAnnouncement = true; 
         }
         
         triggerSimulation(currentVisibleIndex, currentVisibleIndex, 1);

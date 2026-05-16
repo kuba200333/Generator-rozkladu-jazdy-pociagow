@@ -51,66 +51,43 @@ if (isset($_POST['ajax_action'])) {
 // --- KONIEC OBSŁUGI KODÓW OPÓŹNIEŃ ---
 
 // Pobieranie listy posterunków (stacji)
+// Pobieranie listy posterunków (stacji)
 $stacje_res = mysqli_query($conn, "SELECT id_stacji, nazwa_stacji FROM stacje WHERE typ_stacji_id IN (1,2,3,5) ORDER BY nazwa_stacji");
 $wybrana_stacja = $_GET['id_stacji'] ?? 29;
+$wybrana_data = $_GET['data'] ?? date('Y-m-d'); // NOWOŚĆ: pobieranie daty
 
 $pociagi = [];
 if ($wybrana_stacja) {
-    // Pobieramy dane. 
+    // KLUCZOWA ZMIANA W ZAPYTANIU: p.data_kursowania = ?
     $sql = "
     SELECT 
         sr.id_szczegolu, sr.id_przejazdu, sr.przyjazd, sr.odjazd, 
         sr.przyjazd_rzecz, sr.odjazd_rzecz, sr.tor, sr.peron, sr.status_dyzurnego, sr.uwagi_postoju,
         sr.kolejnosc,
-        p.numer_pociagu, p.nazwa_pociagu, 
+        p.numer_pociagu, p.nazwa_pociagu, p.data_kursowania,
         tp.skrot as rodzaj, tp.pelna_nazwa as rodzaj_pelna, tp.kolor_czcionki, sr.czy_odwolany, sr.zatwierdzony,
         pr.pelna_nazwa as przewoznik_skrot,
         
         (SELECT s.nazwa_stacji FROM stacje s WHERE s.id_stacji = t.id_stacji_poczatkowej) as stacja_pocz,
         (SELECT s.nazwa_stacji FROM stacje s WHERE s.id_stacji = t.id_stacji_koncowej) as stacja_konc,
         
-        (SELECT s2.nazwa_stacji 
-         FROM szczegoly_rozkladu sr2 
-         JOIN stacje s2 ON sr2.id_stacji = s2.id_stacji
-         WHERE sr2.id_przejazdu = sr.id_przejazdu 
-         AND CAST(sr2.kolejnosc AS SIGNED) < CAST(sr.kolejnosc AS SIGNED)
-         AND s2.typ_stacji_id IN (1, 3,5)
-         ORDER BY CAST(sr2.kolejnosc AS SIGNED) DESC LIMIT 1) as stacja_prev,
+        (SELECT s2.nazwa_stacji FROM szczegoly_rozkladu sr2 JOIN stacje s2 ON sr2.id_stacji = s2.id_stacji WHERE sr2.id_przejazdu = sr.id_przejazdu AND CAST(sr2.kolejnosc AS SIGNED) < CAST(sr.kolejnosc AS SIGNED) AND s2.typ_stacji_id IN (1, 3,5) ORDER BY CAST(sr2.kolejnosc AS SIGNED) DESC LIMIT 1) as stacja_prev,
 
-        (SELECT s3.nazwa_stacji 
-         FROM szczegoly_rozkladu sr3 
-         JOIN stacje s3 ON sr3.id_stacji = s3.id_stacji
-         WHERE sr3.id_przejazdu = sr.id_przejazdu 
-         AND CAST(sr3.kolejnosc AS SIGNED) > CAST(sr.kolejnosc AS SIGNED)
-         AND s3.typ_stacji_id IN (1, 3,5)
-         ORDER BY CAST(sr3.kolejnosc AS SIGNED) ASC LIMIT 1) as stacja_next,
+        (SELECT s3.nazwa_stacji FROM szczegoly_rozkladu sr3 JOIN stacje s3 ON sr3.id_stacji = s3.id_stacji WHERE sr3.id_przejazdu = sr.id_przejazdu AND CAST(sr3.kolejnosc AS SIGNED) > CAST(sr.kolejnosc AS SIGNED) AND s3.typ_stacji_id IN (1, 3,5) ORDER BY CAST(sr3.kolejnosc AS SIGNED) ASC LIMIT 1) as stacja_next,
 
-        (SELECT CASE 
-            WHEN sr_hist.odjazd_rzecz IS NOT NULL AND sr_hist.odjazd_rzecz != sr_hist.odjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.odjazd, sr_hist.odjazd_rzecz)
-            WHEN sr_hist.przyjazd_rzecz IS NOT NULL AND sr_hist.przyjazd_rzecz != sr_hist.przyjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.przyjazd, sr_hist.przyjazd_rzecz)
-            ELSE 0 END
-         FROM szczegoly_rozkladu sr_hist
-         WHERE sr_hist.id_przejazdu = sr.id_przejazdu 
-           AND CAST(sr_hist.kolejnosc AS SIGNED) < CAST(sr.kolejnosc AS SIGNED)
-           AND (
-                (sr_hist.odjazd_rzecz IS NOT NULL AND sr_hist.odjazd_rzecz != sr_hist.odjazd) 
-                OR 
-                (sr_hist.przyjazd_rzecz IS NOT NULL AND sr_hist.przyjazd_rzecz != sr_hist.przyjazd)
-               )
-         ORDER BY CAST(sr_hist.kolejnosc AS SIGNED) DESC LIMIT 1
-        ) as opoznienie_aktywne
+        (SELECT CASE WHEN sr_hist.odjazd_rzecz IS NOT NULL AND sr_hist.odjazd_rzecz != sr_hist.odjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.odjazd, sr_hist.odjazd_rzecz) WHEN sr_hist.przyjazd_rzecz IS NOT NULL AND sr_hist.przyjazd_rzecz != sr_hist.przyjazd THEN TIMESTAMPDIFF(MINUTE, sr_hist.przyjazd, sr_hist.przyjazd_rzecz) ELSE 0 END FROM szczegoly_rozkladu sr_hist WHERE sr_hist.id_przejazdu = sr.id_przejazdu AND CAST(sr_hist.kolejnosc AS SIGNED) < CAST(sr.kolejnosc AS SIGNED) AND ((sr_hist.odjazd_rzecz IS NOT NULL AND sr_hist.odjazd_rzecz != sr_hist.odjazd) OR (sr_hist.przyjazd_rzecz IS NOT NULL AND sr_hist.przyjazd_rzecz != sr_hist.przyjazd)) ORDER BY CAST(sr_hist.kolejnosc AS SIGNED) DESC LIMIT 1) as opoznienie_aktywne
 
     FROM szczegoly_rozkladu sr
     JOIN przejazdy p ON sr.id_przejazdu = p.id_przejazdu
     JOIN trasy t ON p.id_trasy = t.id_trasy
     JOIN typy_pociagow tp ON p.id_typu_pociagu = tp.id_typu
     LEFT JOIN przewoznicy pr ON tp.id_przewoznika = pr.id_przewoznika
-    WHERE sr.id_stacji = ?
+    WHERE sr.id_stacji = ? AND p.data_kursowania = ?
     ORDER BY sr.przyjazd ASC
     ";
     
     $stmt = mysqli_prepare($conn, $sql);
-    mysqli_stmt_bind_param($stmt, "i", $wybrana_stacja);
+    mysqli_stmt_bind_param($stmt, "is", $wybrana_stacja, $wybrana_data);
     mysqli_stmt_execute($stmt);
     $res = mysqli_stmt_get_result($stmt);
     $pociagi = mysqli_fetch_all($res, MYSQLI_ASSOC);
@@ -219,17 +196,25 @@ function diffMinutesPHP($plan, $rzecz) {
 
 <div class="top-bar">
     <div class="control-group">
-        <label>Posterunek:</label>
         <form method="GET" id="formStacja">
-            <select name="id_stacji" id="selectStacja" onchange="document.getElementById('formStacja').submit()">
-                <?php 
-                mysqli_data_seek($stacje_res, 0);
-                while($s = mysqli_fetch_assoc($stacje_res)): ?>
-                    <option value="<?= $s['id_stacji'] ?>" <?= $s['id_stacji'] == $wybrana_stacja ? 'selected' : '' ?>>
-                        <?= $s['nazwa_stacji'] ?>
-                    </option>
-                <?php endwhile; ?>
-            </select>
+            <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                <div>
+                    <label>Posterunek:</label>
+                    <select name="id_stacji" id="selectStacja" onchange="document.getElementById('formStacja').submit()">
+                        <?php 
+                        mysqli_data_seek($stacje_res, 0);
+                        while($s = mysqli_fetch_assoc($stacje_res)): ?>
+                            <option value="<?= $s['id_stacji'] ?>" <?= $s['id_stacji'] == $wybrana_stacja ? 'selected' : '' ?>>
+                                <?= $s['nazwa_stacji'] ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+                <div>
+                    <label>Rozkład dla daty:</label>
+                    <input type="date" name="data" value="<?= $wybrana_data ?>" onchange="document.getElementById('formStacja').submit()" style="border: 1px solid #777; padding: 2px; font-size: 11px;">
+                </div>
+            </div>
         </form>
         <div class="radio-group" style="margin-top: 5px;">
             <label><input type="radio" name="view" checked> wszystkie</label>

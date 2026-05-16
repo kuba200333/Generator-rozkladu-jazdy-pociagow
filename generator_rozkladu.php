@@ -16,9 +16,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'reset') {
     exit;
 }
 
-// --- AUTO-MIGRACJA TABEL SŁOWNIKOWYCH ---
+// --- AUTO-MIGRACJA TABEL SŁOWNIKOWYCH I DAT KURSOWANIA ---
 mysqli_query($conn, "CREATE TABLE IF NOT EXISTS nazwy_pociagow (id INT AUTO_INCREMENT PRIMARY KEY, nazwa VARCHAR(100) NOT NULL UNIQUE)");
 mysqli_query($conn, "CREATE TABLE IF NOT EXISTS szablony_postojow (id INT AUTO_INCREMENT PRIMARY KEY, id_trasy INT NOT NULL, nazwa_szablonu VARCHAR(100) NOT NULL, typy TEXT, czasy TEXT)");
+mysqli_query($conn, "ALTER TABLE przejazdy ADD COLUMN IF NOT EXISTS data_kursowania DATE NULL AFTER id_typu_pociagu");
 
 // --- OBSŁUGA SZABLONÓW (AJAX) ---
 if (isset($_POST['ajax_action'])) {
@@ -43,7 +44,6 @@ if (isset($_POST['ajax_action'])) {
     }
 }
 
-// Definicja dostępnych symboli (piktogramów)
 $available_symbols = [
     'klasa_1' => '1 klasa', 'klasa_2' => '2 klasa', 'rower' => 'Przewóz rowerów', 'rezerwacja' => 'Rezerwacja obowiązkowa',
     'wozek_rampa' => 'Dla os. na wózkach (z rampą)', 'wozek_bez_rampy' => 'Dla os. na wózkach (bez rampy)', 'kuszetka' => 'Kuszetka',
@@ -52,7 +52,6 @@ $available_symbols = [
     'przewijak' => 'Miejsce do przewijania dziecka', 'duzy_bagaz' => 'Miejsce na duży bagaż'
 ];
 
-// --- STATYSTYKI Z BAZY DANYCH ---
 $statystyki_symboli = [];
 $res_symbole = @mysqli_query($conn, "SELECT id_typu_pociagu, symbole FROM przejazdy WHERE symbole IS NOT NULL AND symbole != ''");
 if ($res_symbole) {
@@ -91,13 +90,11 @@ if ($res_symbole) {
 }
 
 if (empty($_SESSION['dni_kursowania'])) {
-    $opcje_dni = ['①-⑤', '①-⑦', '⑥-⑦', '①-⑤,⑦'];
-    $_SESSION['dni_kursowania'] = $opcje_dni[array_rand($opcje_dni)];
+    $_SESSION['dni_kursowania'] = '①-⑦';
 }
 
 $czy_zmiana_trasy = false;
 
-// --- 1. LOGIKA KLONOWANIA Z BAZY DANYCH ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'klonuj_z_bazy') {
     $id_clone = intval($_POST['id_pociagu_do_klonowania']);
     if ($id_clone > 0) {
@@ -118,8 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $_SESSION['symbole'] = array_map(function($s){ return trim(str_replace(['"', '[', ']', '\\'], '', $s)); }, $tablica_symboli);
             
             $_SESSION['daty_kursowania'] = $r_p['daty_kursowania'] ?? '';
-            $opcje_dni = ['①-⑤', '①-⑦', '⑥-⑦', '①-⑤,⑦'];
-            $_SESSION['dni_kursowania'] = $opcje_dni[array_rand($opcje_dni)];
+            $_SESSION['dni_kursowania'] = $r_p['dni_kursowania'] ?? '';
             
             $q_s = mysqli_query($conn, "SELECT * FROM szczegoly_rozkladu WHERE id_przejazdu = $id_clone ORDER BY CAST(kolejnosc AS SIGNED) ASC");
             $i = 0;
@@ -166,19 +162,15 @@ elseif ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['id_trasy'])) {
         unset($_SESSION['symbole']);
         
         $_SESSION['id_trasy'] = $nowe_id_trasy;
-        $opcje_dni = ['①-⑤', '①-⑦', '⑥-⑦', '①-⑤,⑦'];
-        $_SESSION['dni_kursowania'] = $opcje_dni[array_rand($opcje_dni)];
     }
 }
 
 $id_trasy = $_SESSION['id_trasy'] ?? null;
 
-// Pobieranie nazw pociągów do podpowiedzi
 $nazwy_list = [];
 $q_n = mysqli_query($conn, "SELECT nazwa FROM nazwy_pociagow ORDER BY nazwa");
 while($rn = mysqli_fetch_assoc($q_n)) { $nazwy_list[] = $rn['nazwa']; }
 
-// Pobieranie szablonów dla wybranej trasy z bazy
 $szablony_db = [];
 if ($id_trasy) {
     $q_szab = mysqli_query($conn, "SELECT nazwa_szablonu, typy, czasy FROM szablony_postojow WHERE id_trasy = $id_trasy");
@@ -190,7 +182,6 @@ if ($id_trasy) {
     }
 }
 
-// --- 3. STANDARDOWY ZAPIS DANYCH Z FORMULARZA DO SESJI ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$czy_zmiana_trasy) {
     $_SESSION['nr_poc'] = $_POST['nr_poc'] ?? ($_SESSION['nr_poc'] ?? '');
     $_SESSION['id_typu_pociagu'] = $_POST['id_typu_pociagu'] ?? ($_SESSION['id_typu_pociagu'] ?? null);
@@ -284,11 +275,11 @@ if (isset($wiadomosc_lokalna)) {
         #postoj_select, #postoj_input { border: none; background: transparent; text-align: center; font-weight: bold; width: 100px; padding: 0;}
         input.platform-track { width: 100%; text-align: center; border:none; background:transparent; }
         .godzina-cell { text-align: center; white-space: pre; font-weight: bold; }
-        .button { background-color: #28a745; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; font-size: 1em; }
+        .button { background-color: #28a745; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; font-size: 1em; font-weight:bold; }
         .button:hover { background-color: #218838; }
         .action-button { background-color: #007bff; }
         .action-button:hover { background-color: #0056b3; }
-        a { color: #007bff; }
+        a { color: #007bff; font-weight:bold;}
         .symbols-container { border: 1px solid #ccc; padding: 10px; margin-top: 10px; background: #fff; }
         .symbols-container label { display: inline-block; margin-right: 15px; font-weight: normal;}
         .status-success { padding: 10px; background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 5px; margin-bottom: 15px; }
@@ -296,7 +287,7 @@ if (isset($wiadomosc_lokalna)) {
     </style>
 </head>
 <body>
-    <a href="index.php">Powrót do menu</a><br><br>
+    <a href="index.php">Powrót do menu głównego</a><br><br>
 
     <?= $status_msg ?>
 
@@ -304,19 +295,19 @@ if (isset($wiadomosc_lokalna)) {
         
         <div class="form-container" style="background-color: #fff3cd; border-color: #ffeeba; margin-bottom: 20px;">
             <div class="form-section" style="margin-bottom: 0;">
-                <label style="color: #856404;">🐑 <strong>Klonowanie istniejącego pociągu z bazy (wczytuje od razu trasę, perony i postoje):</strong></label>
+                <label style="color: #856404;">🐑 <strong>Klonowanie istniejącego pociągu z bazy:</strong></label>
                 <div style="display: flex; gap: 10px;">
                     <select name="id_pociagu_do_klonowania" style="flex-grow: 1;">
                         <option value="">-- Wybierz pociąg do sklonowania --</option>
                         <?php
-                        $q_all_trains = mysqli_query($conn, "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, t.nazwa_trasy FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy ORDER BY t.nazwa_trasy, p.numer_pociagu");
+                        $q_all_trains = mysqli_query($conn, "SELECT p.id_przejazdu, p.numer_pociagu, p.nazwa_pociagu, p.data_kursowania, t.nazwa_trasy FROM przejazdy p JOIN trasy t ON p.id_trasy = t.id_trasy ORDER BY p.data_kursowania DESC, t.nazwa_trasy");
                         while ($tr = mysqli_fetch_assoc($q_all_trains)) {
                             $nazw = $tr['nazwa_pociagu'] ? " \"{$tr['nazwa_pociagu']}\"" : "";
-                            echo "<option value='{$tr['id_przejazdu']}'>{$tr['nazwa_trasy']} - {$tr['numer_pociagu']}{$nazw}</option>";
+                            echo "<option value='{$tr['id_przejazdu']}'>[{$tr['data_kursowania']}] {$tr['nazwa_trasy']} - {$tr['numer_pociagu']}{$nazw}</option>";
                         }
                         ?>
                     </select>
-                    <button type="submit" name="action" value="klonuj_z_bazy" formnovalidate class="button" style="background-color: #ffc107; color: #000; font-weight: bold; padding: 5px 15px;">Klonuj i wczytaj (+2 do nr)</button>
+                    <button type="submit" name="action" value="klonuj_z_bazy" formnovalidate class="button" style="background-color: #ffc107; color: #000; padding: 5px 15px;">Klonuj i wczytaj (+2 do nr)</button>
                 </div>
             </div>
         </div>
@@ -369,14 +360,37 @@ if (isset($wiadomosc_lokalna)) {
                         <?php foreach($nazwy_list as $naz) echo "<option value=\"".htmlspecialchars($naz)."\">"; ?>
                     </datalist>
                 </div>
-                <div class="form-section">
-                    <label>Daty obowiązywania (np. 15 VI – 30 VIII 2025):</label>
-                    <input type="text" name="daty_kursowania" value="<?= @$_SESSION['daty_kursowania'] ?>">
+                
+                <div class="form-section" style="grid-column: span 2;">
+                    <label style="color:#004080;">ℹ️ Informacja tekstowa na plakatach stacyjnych:</label>
+                    <div style="display:flex; gap:10px;">
+                        <input type="text" name="daty_kursowania" id="auto_daty" value="<?= @$_SESSION['daty_kursowania'] ?>" placeholder="Daty: np. 15 VI - 30 VIII" style="flex:1;">
+                        <input type="text" name="dni_kursowania" id="auto_dni" value="<?= @$_SESSION['dni_kursowania'] ?>" placeholder="Dni: np. ①-⑤,⑦" style="flex:1;">
+                    </div>
                 </div>
-                 <div class="form-section" style="grid-column: span 2;">
-                    <label>Dni/Uwagi do kursowania (np. 28 VI-30 VIII ⑥⑦ + 15 VIII.):</label>
-                    <input type="text" name="dni_kursowania" value="<?= @$_SESSION['dni_kursowania'] ?>" style="width: 100%;">
+
+                <div class="form-section" style="grid-column: span 2; background: #e8f4fd; padding: 15px; border-radius: 5px; border: 2px solid #8cb4f5;">
+                    <h3 style="margin-top:0; color:#004080; border-bottom: 1px solid #b8daff; padding-bottom:5px;">📅 Generowanie fizycznych przejazdów (Dla Panelu Dyżurnego)</h3>
+                    <p style="font-size:13px; margin: 0 0 10px 0; color:#555;">Wybierz zakres dat i dni tygodnia. Pociąg pojawi się na mapach i u dyżurnego <b>tylko w te dni</b>.</p>
+                    <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                        <div>
+                            <strong>Od:</strong> <input type="date" name="data_od" id="data_od" value="<?= date('Y-m-d') ?>" required style="width: auto;">
+                        </div>
+                        <div>
+                            <strong>Do:</strong> <input type="date" name="data_do" id="data_do" value="<?= date('Y-m-d') ?>" required style="width: auto;">
+                        </div>
+                        <div style="font-weight: bold;">
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="1" checked> Pn</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="2" checked> Wt</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="3" checked> Śr</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="4" checked> Cz</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="5" checked> Pt</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="6" checked> Sb</label>
+                            <label style="display:inline; margin-right:10px;"><input type="checkbox" name="dni_tygodnia[]" class="day-cb" value="7" checked> Nd</label>
+                        </div>
+                    </div>
                 </div>
+
                 <div class="form-section symbols-container" style="grid-column: span 2;">
                     <label>Piktogramy/Symbole:</label><br>
                     <?php
@@ -390,8 +404,8 @@ if (isset($wiadomosc_lokalna)) {
             <br>
 
             <div style="margin-bottom: 15px;">
-                <button type="submit" name="action" value="generuj" class="button action-button">Generuj / Odśwież widok</button>
-                <button type="submit" name="action" value="reset" formnovalidate class="button" style="background-color: #dc3545; color: white; font-weight: bold; margin-left: 15px;">🗑️ Wyczyść cały formularz</button>
+                <button type="submit" name="action" value="generuj" class="button action-button">Generuj czasy / Odśwież widok</button>
+                <button type="submit" name="action" value="reset" formnovalidate class="button" style="background-color: #dc3545; color: white; margin-left: 15px;">🗑️ Wyczyść cały formularz</button>
             </div>
 
             <div class="set-all-container">
@@ -462,13 +476,9 @@ if (isset($wiadomosc_lokalna)) {
                     }
 
                     $czas_do_dodania -= $korekta;
-
-                    if ($czas_do_dodania < 30) {
-                        $czas_do_dodania = 30;
-                    }
+                    if ($czas_do_dodania < 30) $czas_do_dodania = 30;
                 }
                 $godzina_biezaca += $czas_do_dodania;
-                
                 $przyjazd_ts = $godzina_biezaca;
 
                 $postoj_data = $_SESSION['postoje'][$index] ?? [];
@@ -479,7 +489,6 @@ if (isset($wiadomosc_lokalna)) {
                 $tor_val = $postoj_data['tor'] ?? '';
 
                 if (empty($peron_val) && empty($tor_val)) {
-                    
                     $id_stacji_nastepnej = ($index < $liczba_stacji - 1) ? $full_stacje_list[$index + 1]['id_stacji'] : null;
                     $id_stacji_poprzedniej = ($index > 0) ? $full_stacje_list[$index - 1]['id_stacji'] : null;
                     
@@ -490,11 +499,8 @@ if (isset($wiadomosc_lokalna)) {
                         mysqli_stmt_bind_param($stmt_def_full, "iii", $id_stacji_biezacej, $id_stacji_nastepnej, $id_stacji_poprzedniej);
                         mysqli_stmt_execute($stmt_def_full);
                         $res_def_full = mysqli_stmt_get_result($stmt_def_full);
-                        
                         if ($row_def = mysqli_fetch_assoc($res_def_full)) {
-                            $peron_val = $row_def['peron'];
-                            $tor_val = $row_def['tor'];
-                            $found_in_defaults = true;
+                            $peron_val = $row_def['peron']; $tor_val = $row_def['tor']; $found_in_defaults = true;
                         }
                     }
 
@@ -503,11 +509,8 @@ if (isset($wiadomosc_lokalna)) {
                         mysqli_stmt_bind_param($stmt_def_gen, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
                         mysqli_stmt_execute($stmt_def_gen);
                         $res_def_gen = mysqli_stmt_get_result($stmt_def_gen);
-                        
                         if ($row_def = mysqli_fetch_assoc($res_def_gen)) {
-                            $peron_val = $row_def['peron'];
-                            $tor_val = $row_def['tor'];
-                            $found_in_defaults = true;
+                            $peron_val = $row_def['peron']; $tor_val = $row_def['tor']; $found_in_defaults = true;
                         }
                     }
 
@@ -516,77 +519,20 @@ if (isset($wiadomosc_lokalna)) {
                         mysqli_stmt_bind_param($stmt_def_end, "ii", $id_stacji_biezacej, $id_stacji_poprzedniej);
                         mysqli_stmt_execute($stmt_def_end);
                         $res_def_end = mysqli_stmt_get_result($stmt_def_end);
-                        
                         if ($row_def = mysqli_fetch_assoc($res_def_end)) {
-                            $peron_val = $row_def['peron'];
-                            $tor_val = $row_def['tor'];
-                            $found_in_defaults = true;
+                            $peron_val = $row_def['peron']; $tor_val = $row_def['tor']; $found_in_defaults = true;
                         }
                     }
 
                     if (!$found_in_defaults) {
                         $found_history = false;
-
                         if ($id_stacji_poprzedniej && $id_stacji_nastepnej) {
-                            $sql_wezel = "SELECT t2.peron, t2.tor 
-                                          FROM szczegoly_rozkladu t1 
-                                          JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                          JOIN szczegoly_rozkladu t3 ON t2.id_przejazdu = t3.id_przejazdu 
-                                          WHERE t1.id_stacji = ? 
-                                            AND t2.id_stacji = ? 
-                                            AND t3.id_stacji = ?
-                                            AND t2.kolejnosc = t1.kolejnosc + 1
-                                            AND t3.kolejnosc = t2.kolejnosc + 1
-                                            AND t2.peron IS NOT NULL AND t2.peron != '' 
-                                          ORDER BY t2.id_przejazdu DESC LIMIT 1";
+                            $sql_wezel = "SELECT t2.peron, t2.tor FROM szczegoly_rozkladu t1 JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu JOIN szczegoly_rozkladu t3 ON t2.id_przejazdu = t3.id_przejazdu WHERE t1.id_stacji = ? AND t2.id_stacji = ? AND t3.id_stacji = ? AND t2.kolejnosc = t1.kolejnosc + 1 AND t3.kolejnosc = t2.kolejnosc + 1 AND t2.peron IS NOT NULL AND t2.peron != '' ORDER BY t2.id_przejazdu DESC LIMIT 1";
                             $stmt = mysqli_prepare($conn, $sql_wezel);
                             mysqli_stmt_bind_param($stmt, "iii", $id_stacji_poprzedniej, $id_stacji_biezacej, $id_stacji_nastepnej);
                             mysqli_stmt_execute($stmt);
                             $res = mysqli_stmt_get_result($stmt);
-                            if ($row = mysqli_fetch_assoc($res)) {
-                                $peron_val = $row['peron'];
-                                $tor_val = $row['tor'];
-                                $found_history = true;
-                            }
-                        }
-
-                        if (!$found_history && $id_stacji_nastepnej) {
-                            $sql_start = "SELECT t1.peron, t1.tor 
-                                          FROM szczegoly_rozkladu t1 
-                                          JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                          WHERE t1.id_stacji = ? 
-                                            AND t2.id_stacji = ? 
-                                            AND t2.kolejnosc = t1.kolejnosc + 1
-                                            AND t1.peron IS NOT NULL AND t1.peron != '' 
-                                          ORDER BY t1.id_przejazdu DESC LIMIT 1";
-                            $stmt = mysqli_prepare($conn, $sql_start);
-                            mysqli_stmt_bind_param($stmt, "ii", $id_stacji_biezacej, $id_stacji_nastepnej);
-                            mysqli_stmt_execute($stmt);
-                            $res = mysqli_stmt_get_result($stmt);
-                            if ($row = mysqli_fetch_assoc($res)) {
-                                $peron_val = $row['peron'];
-                                $tor_val = $row['tor'];
-                                $found_history = true;
-                            }
-                        }
-
-                        if (!$found_history && $id_stacji_poprzedniej && !$id_stacji_nastepnej) {
-                            $sql_end = "SELECT t2.peron, t2.tor 
-                                          FROM szczegoly_rozkladu t1 
-                                          JOIN szczegoly_rozkladu t2 ON t1.id_przejazdu = t2.id_przejazdu 
-                                          WHERE t1.id_stacji = ? 
-                                            AND t2.id_stacji = ? 
-                                            AND t2.kolejnosc = t1.kolejnosc + 1
-                                            AND t2.peron IS NOT NULL AND t2.peron != '' 
-                                          ORDER BY t2.id_przejazdu DESC LIMIT 1";
-                            $stmt = mysqli_prepare($conn, $sql_end);
-                            mysqli_stmt_bind_param($stmt, "ii", $id_stacji_poprzedniej, $id_stacji_biezacej);
-                            mysqli_stmt_execute($stmt);
-                            $res = mysqli_stmt_get_result($stmt);
-                            if ($row = mysqli_fetch_assoc($res)) {
-                                $peron_val = $row['peron'];
-                                $tor_val = $row['tor'];
-                            }
+                            if ($row = mysqli_fetch_assoc($res)) { $peron_val = $row['peron']; $tor_val = $row['tor']; $found_history = true; }
                         }
                     }
                 }
@@ -647,15 +593,7 @@ if (isset($wiadomosc_lokalna)) {
                     echo "<input id='postoj_input' type='time' step='30' name='postoje[{$index}][czas]' value='{$postoj_val}' onchange='this.form.submit()'>";
                 } else { echo "|"; }
                 
-                if ($index == 0 || $index == $liczba_stacji - 1) {
-                    $typ_postoju_do_zapisu = "";
-                } 
-                else if (empty($typ_postoju_val)) {
-                    $typ_postoju_do_zapisu = "";
-                } 
-                else {
-                    $typ_postoju_do_zapisu = $typ_postoju_val;
-                }
+                $typ_postoju_do_zapisu = ($index == 0 || $index == $liczba_stacji - 1 || empty($typ_postoju_val)) ? "" : $typ_postoju_val;
 
                 echo "<input type='hidden' name='zapis[{$index}][id_stacji]' value='{$id_stacji_biezacej}'>";
                 echo "<input type='hidden' name='zapis[{$index}][kolejnosc]' value='" . ($index+1) . "'>";
@@ -674,7 +612,7 @@ if (isset($wiadomosc_lokalna)) {
             ?>
         </table>
         <br>
-        <button type="submit" class="button" formaction="zapisz_rozklad.php">💾 Zapisz ten rozkład do bazy</button>
+        <button type="submit" class="button" formaction="zapisz_rozklad.php" style="background:#004080; padding:15px; font-size:18px;">💾 Stwórz fizyczne przejazdy w bazie</button>
         <?php endif; ?>
     </form>
 
@@ -693,6 +631,67 @@ if (isset($wiadomosc_lokalna)) {
             sessionStorage.setItem('scrollpos', window.scrollY);
         });
 
+        // --- SKRYPT DO AUTO-WYPEŁNIANIA TEKSTÓW Z DATAMI ---
+        function updateTextInfo() {
+            const dataOd = document.getElementById('data_od').value;
+            const dataDo = document.getElementById('data_do').value;
+
+            const monthsRoman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+
+            let dateStr = '';
+            if (dataOd) {
+                let dOd = new Date(dataOd);
+                let strOd = dOd.getDate() + ' ' + monthsRoman[dOd.getMonth() + 1];
+                if (dataDo && dataOd !== dataDo) {
+                    let dDo = new Date(dataDo);
+                    let strDo = dDo.getDate() + ' ' + monthsRoman[dDo.getMonth() + 1];
+                    dateStr = strOd + ' - ' + strDo;
+                } else {
+                    dateStr = strOd;
+                }
+            }
+            document.getElementById('auto_daty').value = dateStr;
+
+            const circled = {1:'①', 2:'②', 3:'③', 4:'④', 5:'⑤', 6:'⑥', 7:'⑦'};
+            let selected = Array.from(document.querySelectorAll('.day-cb:checked')).map(cb => parseInt(cb.value)).sort();
+
+            if (selected.length === 7) {
+                document.getElementById('auto_dni').value = '①-⑦';
+            } else if (selected.length === 0) {
+                document.getElementById('auto_dni').value = '';
+            } else {
+                let groups = [];
+                let tempGroup = [];
+                for(let i=0; i<selected.length; i++) {
+                    if(tempGroup.length === 0) {
+                        tempGroup.push(selected[i]);
+                    } else {
+                        if(selected[i] === tempGroup[tempGroup.length-1] + 1) {
+                            tempGroup.push(selected[i]);
+                        } else {
+                            groups.push(tempGroup);
+                            tempGroup = [selected[i]];
+                        }
+                    }
+                }
+                if(tempGroup.length > 0) groups.push(tempGroup);
+
+                let parts = groups.map(g => {
+                    if(g.length === 1) return circled[g[0]];
+                    if(g.length === 2) return circled[g[0]] + ',' + circled[g[1]];
+                    return circled[g[0]] + '-' + circled[g[g.length-1]];
+                });
+                document.getElementById('auto_dni').value = parts.join(',');
+            }
+        }
+
+        // Nasłuchiwanie zmian na polach
+        document.getElementById('data_od').addEventListener('change', updateTextInfo);
+        document.getElementById('data_do').addEventListener('change', updateTextInfo);
+        document.querySelectorAll('.day-cb').forEach(cb => cb.addEventListener('change', updateTextInfo));
+        updateTextInfo();
+        // ----------------------------------------------------
+
         function zastosujDomyslnePiktogramy(selectElem) {
             const selectedOption = selectElem.options[selectElem.selectedIndex];
             const skrot = selectedOption.getAttribute('data-skrot');
@@ -702,22 +701,15 @@ if (isset($wiadomosc_lokalna)) {
             document.querySelectorAll("input[name='symbole[]']").forEach(cb => cb.checked = false);
 
             let toCheck = [];
-            
             if (domyslneZBazy[idTypu] && domyslneZBazy[idTypu].length > 0) {
                 toCheck = domyslneZBazy[idTypu];
             } else {
                 const kat = skrot.toUpperCase();
-                if (['EIP'].includes(kat)) {
-                    toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'bar', 'wifi', 'wozek_rampa'];
-                } else if (['EIC', 'EC', 'EN'].includes(kat)) {
-                    toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'restauracyjny', 'wifi', 'wozek_rampa'];
-                } else if (['IC', 'IC+', 'TLK'].includes(kat)) {
-                    toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'wozek_rampa', 'rower', 'wifi'];
-                } else if (['R', 'OS', 'P', 'RP', 'IR', 'REGIO'].includes(kat)) {
-                    toCheck = ['klasa_2', 'rower', 'wozek_rampa'];
-                } else {
-                    toCheck = ['klasa_2']; 
-                }
+                if (['EIP'].includes(kat)) toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'bar', 'wifi', 'wozek_rampa'];
+                else if (['EIC', 'EC', 'EN'].includes(kat)) toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'restauracyjny', 'wifi', 'wozek_rampa'];
+                else if (['IC', 'IC+', 'TLK'].includes(kat)) toCheck = ['klasa_1', 'klasa_2', 'rezerwacja', 'klima', 'wozek_rampa', 'rower', 'wifi'];
+                else if (['R', 'OS', 'P', 'RP', 'IR', 'REGIO'].includes(kat)) toCheck = ['klasa_2', 'rower', 'wozek_rampa'];
+                else toCheck = ['klasa_2']; 
             }
 
             toCheck.forEach(sym => {
@@ -747,7 +739,6 @@ if (isset($wiadomosc_lokalna)) {
             });
         });
 
-        // --- OBSŁUGA SZABLONÓW POSTOJÓW (TERAZ Z BAZY DANYCH) ---
         const idTrasyObecnej = "<?= $id_trasy ?>";
         const szablonyZBazy = <?= json_encode($szablony_db) ?>;
 
@@ -755,7 +746,6 @@ if (isset($wiadomosc_lokalna)) {
             if (!idTrasyObecnej) return;
             const select = document.getElementById('lista_szablonow');
             select.innerHTML = '<option value="">-- Wybierz --</option>';
-            
             for (let nazwa in szablonyZBazy) {
                 let opt = document.createElement('option');
                 opt.value = nazwa;
@@ -782,7 +772,7 @@ if (isset($wiadomosc_lokalna)) {
             .then(res => res.json())
             .then(res => {
                 if(res.success) {
-                    alert("Zapisano szablon: " + nazwa + " w bazie danych!");
+                    alert("Zapisano szablon w bazie!");
                     szablonyZBazy[nazwa] = { typy: typy, czasy: czasy };
                     document.getElementById('nazwa_szablonu').value = '';
                     odswiezListeSzablonow();
@@ -797,10 +787,8 @@ if (isset($wiadomosc_lokalna)) {
             if (szablonyZBazy[nazwa]) {
                 const typyWybory = document.querySelectorAll("select[name^='postoje'][name$='[typ]']");
                 const czasyWejscia = document.querySelectorAll("input[name^='postoje'][name$='[czas]']");
-
                 szablonyZBazy[nazwa].typy.forEach((val, i) => { if(typyWybory[i]) typyWybory[i].value = val; });
                 szablonyZBazy[nazwa].czasy.forEach((val, i) => { if(czasyWejscia[i]) czasyWejscia[i].value = val; });
-
                 document.getElementById('generatorForm').submit();
             }
         }
